@@ -35,15 +35,19 @@ class Processing:
                 ##Total bins = 1200. Set range = 20m. 1m = 60bins.
                 x, y, z, i = point[:4]
                 #Filter
-                if i < mean+1.5 *std_dev:
-                    i = 0               
-                points[index][0] = x
-                points[index][1] = y
-                points[index][3] = i
+                if i > mean+2.25 *std_dev:              
+                    points[index][0] = x
+                    points[index][1] = y
+                    points[index][3] = i
+                else:
+                    points[index][0] = nan
+                    points[index][1] = nan
+                    points[index][3] = nan
             else:
                 points[index][0] = nan
                 points[index][1] = nan
                 points[index][3] = nan
+        
         pcl_msg.data = points.tobytes()
         pcl_pub.publish(pcl_msg)
 
