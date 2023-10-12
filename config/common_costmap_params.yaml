@@ -8,7 +8,7 @@ observation_sources: point_cloud_sensor
 
 point_cloud_sensor: {
   sensor_frame: alpha_rise/ping360_link, 
-  data_type: PointCloud2, 
-  topic: /alpha_rise/msis/pointcloud, 
+  data_type: LaserScan, 
+  topic: /alpha_rise/scan, 
   marking: true,
   clearing: true}

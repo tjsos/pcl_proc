@@ -1,0 +1,3 @@
+<launch>
+       <node pkg="pcl_proc" type="processing.py" name = "pcl_filter_node" output="screen"/>
+</launch>

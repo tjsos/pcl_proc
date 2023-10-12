@@ -9,11 +9,11 @@ from math import nan
 class Processing:
     def __init__(self) -> None:
         # Subscribe to the PointCloud2 topic
-        # rospy.Subscriber('/alpha_rise/msis/stonefish/data/pointcloud', PointCloud2, pointcloud_callback)
+        # rospy.Subscriber('/alpha_rise/msis/stonefish/data/pointcloud', PointCloud2, self.pointcloud_callback)
         rospy.Subscriber('/alpha_rise/msis/pointcloud', PointCloud2, self.pointcloud_callback)
         
     def pointcloud_callback(self, pointcloud_msg):
-        pcl_pub = rospy.Publisher("/alpha_rise/msis/stonefish/data/pointcloud/filtered", PointCloud2, queue_size=1)
+        pcl_pub = rospy.Publisher("/alpha_rise/msis/pointcloud/filtered", PointCloud2, queue_size=1)
         pcl_msg = PointCloud2()
         pcl_msg.header.frame_id = pointcloud_msg.header.frame_id
         pcl_msg.header.stamp = pointcloud_msg.header.stamp
@@ -51,16 +51,6 @@ class Processing:
         pcl_msg.data = points.tobytes()
         pcl_pub.publish(pcl_msg)
 
-        # print(point)
-        # print("Point: x =", x, "y =", y, "z =", z, "i =", i)
-
-        # if not -10<x<10:
-        #     if not -10<y<10:
-                # x, y, z, i = point[:4]
-
-        #         print("Point: x =", x, "y =", y, "z =", z, "i =", i)
-        #         pcl_pub.publish(pcl_msg)
-    
     def get_intensities(self,pointcloud_msg):
         """
         Returns the mean, std_dev and the echo intensity arrays.
@@ -75,6 +65,6 @@ class Processing:
         return mean, std_dev, intensities.tolist()
     
 if __name__ == '__main__':
-    rospy.init_node('pointcloud_subscriber', anonymous=True)
+    rospy.init_node('pointcloud_filter', anonymous=True)
     process=Processing()
     rospy.spin()
