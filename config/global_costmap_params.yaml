@@ -3,3 +3,4 @@
   robot_base_frame: alpha_rise/base_link
   update_frequency: 10.0
   static_map: false
+  rolling_window: true

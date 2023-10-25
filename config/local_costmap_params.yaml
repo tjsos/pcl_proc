@@ -2,11 +2,12 @@ local_costmap:
   global_frame: alpha_rise/odom
   robot_base_frame: alpha_rise/base_link
   update_frequency: 10.0
-  publish_frequency: 2.0
+  publish_frequency: 10.0
   static_map: false
   rolling_window: true
-  width: 10.0
-  height: 10.0
+  
+  width: 20.0
+  height: 20.0
   resolution: 0.05
   inflation_radius: 0.15 # reduce it according to the tight spaces
   cost_scaling_factor: 1.5
