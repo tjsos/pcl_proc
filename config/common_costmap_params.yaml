@@ -3,32 +3,57 @@ robot_base_frame: alpha_rise/base_link
 transform_tolerance: 2.0
 update_frequency: 10.0
 static_map: false
-obstacle_range: 10.0
-raytrace_range: 30.0
+rolling_window: true
+width: 100.0
+height: 100.0 #100x100 for sf #20x20 for real #number of beams or range
+resolution: 0.5 #0.05 for real. #0.5 for sf
 # footprint: [[-0.3, -0.3], [-0.3, 0.3], [0.3, 0.3], [0.3, -0.3]]
 # inflation_radius: 0.55
 
 plugins:
   - {name: obstacles, type: "costmap_2d::ObstacleLayer"}
+  # - {name: inflation,  type: "costmap_2d::InflationLayer"}
 
 obstacles:
-  observation_sources: laser_scan_sensor
-  # laser_scan_sensor: {
-  #   sensor_frame: alpha_rise/ping360_link, 
-  #   data_type: LaserScan, 
-  #   topic: /alpha_rise/scan, 
-  #   observation_persistance: 60,
+  observation_sources: pointcloud
+  # pointcloud: {
+  #   sensor_frame: alpha_rise/ping360_link,
+  #   data_type: PointCloud2,
+  #   topic: /alpha_rise/pointcloud/filtered,
+  #   #How long to keep each sensor reading in seconds. A value of 0.0 will only keep the most recent reading.
+  #   observation_persistance: 0,
+  #   #Whether or not this observation should be used to mark obstacles.
   #   marking: true,
-  #   clearing: true
-  #   }
+  #   #Whether or not this observation should be used to clear out freespace
+  #   clearing: true,
+  #   #The maximum height in meters of a sensor reading considered valid. 
+  #   max_obstacle_height: 5,
+  #   #The minimum height in meters of a sensor reading considered valid
+  #   min_obstacle_height: -10,
+  #   obstacle_range: 5,
+  #   raytrace_range: 20
+  # }
 
-  laser_scan_sensor: {
-    sensor_frame: alpha_rise/ping360_link,
+
+#StoneFish
+  pointcloud: {
+    sensor_frame: alpha_rise/ping360_link_sf,
     data_type: PointCloud2,
-    topic: /alpha_rise/pointcloud/filtered,
-    observation_persistance: 20,
+    topic: /alpha_rise/msis/pointcloud/filtered,
+    #How long to keep each sensor reading in seconds. A value of 0.0 will only keep the most recent reading.
+    observation_persistance: 0,
+    #Whether or not this observation should be used to mark obstacles.
     marking: true,
-    clearing: false,
+    #Whether or not this observation should be used to clear out freespace
+    clearing: true,
+    #The maximum height in meters of a sensor reading considered valid. 
     max_obstacle_height: 5,
-    min_obstacle_height: -10
+    #The minimum height in meters of a sensor reading considered valid
+    min_obstacle_height: -10,
+    obstacle_range: 50,
+    raytrace_range: 50
   }
+  # inflation:
+  #   enabled:              true
+  #   cost_scaling_factor:  0.1  # exponential rate at which the obstacle cost drops off (default: 10)
+  #   inflation_radius:     0.1  # max. distance from an obstacle at which costs are incurred for planning paths.

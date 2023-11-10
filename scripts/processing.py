@@ -9,8 +9,18 @@ from math import nan
 class Processing:
     def __init__(self) -> None:
         # Subscribe to the PointCloud2 topic
-        # rospy.Subscriber('/alpha_rise/msis/stonefish/data/pointcloud', PointCloud2, self.pointcloud_callback)
-        rospy.Subscriber('/alpha_rise/msis/pointcloud', PointCloud2, self.pointcloud_callback)
+        is_stonefish = rospy.get_param("pcl_filter/stonefish", True)
+        if is_stonefish:
+            sub_topic = rospy.get_param("pcl_filter/sf_sub_topic", '/alpha_rise/msis/stonefish/data/pointcloud')
+            self.radial_filter = rospy.get_param("pcl_filter/sf_radial_filter_param", 5)
+            self.std_dev_multiplier = rospy.get_param("pcl_filter/sf_std_dev_multiplier", 2.5)
+        else:
+            sub_topic = rospy.get_param("pcl_filter/sf_sub_topic", '/alpha_rise/msis/pointcloud')
+            self.std_dev_multiplier = rospy.get_param("pcl_filter/std_dev_multiplier", 2.55)
+            self.radial_filter = rospy.get_param("pcl_filter/radial_filter_param", 120)
+
+        rospy.Subscriber(sub_topic, PointCloud2, self.pointcloud_callback)
+        # rospy.Subscriber('/alpha_rise/msis/pointcloud', PointCloud2, self.pointcloud_callback)
         
     def pointcloud_callback(self, pointcloud_msg):
         pcl_pub = rospy.Publisher("/alpha_rise/msis/pointcloud/filtered", PointCloud2, queue_size=1)
@@ -31,11 +41,12 @@ class Processing:
         # Populate filtered pointclouds.
         points = np.zeros((pcl_msg.width,len(pcl_msg.fields)),dtype=np.float32)
         for index,point in enumerate(pc2.read_points(pointcloud_msg, skip_nans=True)):
-            if index >= 120:
+            if index >= self.radial_filter: #120 real, 5 for stnfsh
                 ##Total bins = 1200. Set range = 20m. 1m = 60bins.
+                ## Stonefish; bins = 100. Set range = 50m. 1m = 2 bins
                 x, y, z, i = point[:4]
                 #Filter
-                if i > mean+2.25 *std_dev:              
+                if i > mean+self.std_dev_multiplier *std_dev:              
                     points[index][0] = x
                     points[index][1] = y
                     points[index][3] = i

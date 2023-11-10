@@ -1,3 +1,4 @@
 <launch>
        <node pkg="pcl_proc" type="processing.py" name = "pcl_filter_node" output="screen"/>
+       <rosparam command="load" file="$(find pcl_proc)/config/filter.yaml"/>
 </launch>
