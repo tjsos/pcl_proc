@@ -1,14 +1,14 @@
+#https://wiki.ros.org/costmap_2d/hydro
 global_frame: alpha_rise/odom
 robot_base_frame: alpha_rise/base_link
 transform_tolerance: 2.0
 update_frequency: 10.0
 static_map: false
 rolling_window: true
+always_send_full_costmap: true
 width: 100.0
 height: 100.0 #100x100 for sf #20x20 for real #number of beams or range
-resolution: 0.5 #0.05 for real. #0.5 for sf
-# footprint: [[-0.3, -0.3], [-0.3, 0.3], [0.3, 0.3], [0.3, -0.3]]
-# inflation_radius: 0.55
+resolution: 0.5 #meters per cell #0.05 for real. #0.5 for sf
 
 plugins:
   - {name: obstacles, type: "costmap_2d::ObstacleLayer"}
@@ -53,7 +53,7 @@ obstacles:
     obstacle_range: 50,
     raytrace_range: 50
   }
-  # inflation:
-  #   enabled:              true
-  #   cost_scaling_factor:  0.1  # exponential rate at which the obstacle cost drops off (default: 10)
-  #   inflation_radius:     0.1  # max. distance from an obstacle at which costs are incurred for planning paths.
+  inflation:
+    enabled:              true
+    cost_scaling_factor:  0.1  # exponential rate at which the obstacle cost drops off (default: 10)
+    inflation_radius:     0.1  # max. distance from an obstacle at which costs are incurred for planning paths.
