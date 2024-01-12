@@ -8,16 +8,11 @@ import cv2
 
 class CostMapProcess:
     def __init__(self) -> None:
-        self.sub = rospy.Subscriber("/move_base/local_costmap/costmap", OccupancyGrid, self.mapCB)
+        rospy.Subscriber("/move_base/local_costmap/costmap", OccupancyGrid, self.mapCB)
+
         self.pub = rospy.Publisher("/stand_off_path", Path, queue_size=1)
-        self.pub_filtered = rospy.Publisher("/stand_off_path/filtered", Path, queue_size=1)
-        rospy.Subscriber("/alpha_rise/odometry/filtered/local", Odometry, self.odomCB)
 
-        self.vx_y, self.vx_x = 0,0
-
-    def odomCB(self, message):
-        self.vx_x = message.pose.pose.position.x
-        self.vx_y = message.pose.pose.position.y
+        self.vx_y, self.vx_x, self.yaw = 0,0,0
 
     def mapCB(self, message):
         self.width = message.info.width
@@ -48,7 +43,6 @@ class CostMapProcess:
         data = cv2.flip(data, 1)  
         data = cv2.rotate(data, cv2.ROTATE_90_CLOCKWISE)
 
-        # near_img = cv2.resize(data,None, fx = 1, fy = 1, interpolation = cv2.INTER_NEAREST)
         
         dilate = cv2.dilate(data, (5,5), 2)
         dilate = cv2.dilate(dilate, (5,5), 2)
@@ -58,88 +52,109 @@ class CostMapProcess:
 
         canny = cv2.Canny(dilate,200,255)
 
-        cell_row = self.find_highest_intensity_coordinates_per_row(canny)
+        pixels = self.find_cordinates_max_value(canny)
+        cell_row = self.get_edges(pixels)
 
-        # row_points, col_points = self.find_closest_points_to_middle(canny)
+        # cell_row_ = self.find_first_highest_intensity_coordinates_per_row(canny)
 
-        # print(row_points)
 
-        # # erode = cv2.erode(dilate, (5,5), 1)
-        
-        # cell_row = self.find_highest_intensity_coordinates_per_row(data)
-        
-    #     #IMAGES
+        #IMAGES
         edge = self.plot_circles(cell_row)
-    #     edge_shifted = self.stand_off(cell_row, edge)
         
-    #     #PATH NOT FILTERD
+        #PATH NOT FILTERD
         path = self.pub_path(cell_row)
         self.pub.publish(path)
 
-    #     #FILERD
-    #     cell_row = self.find_highest_intensity_coordinates_per_custom_row(data, 2)
-    #    # cell_row = self.remove_jumps(cell_row)
-
-    #     path = self.pub_path(cell_row[5:-5])
-        # self.pub_filtered.publish(path)
-
-        # print(cell_row)
         mix= np.hstack((data, dilate, canny, edge))
 
         cv2.imshow("window", mix)
         cv2.waitKey(1)
 
+    def find_cordinates_max_value(self, image):
+        max_intensity = np.max(image)
+
+        # Get the coordinates of pixels with the maximum intensity
+        max_intensity_coordinates = np.column_stack(np.where(image == max_intensity))
+
+        return max_intensity_coordinates
+    
+    def get_edges(self, coordinates):
+        """
+        Convert a list of Cartesian coordinates to polar coordinates.
+
+        Parameters:
+        - coordinates: List of tuples (x, y) representing Cartesian coordinates.
+
+        Returns:
+        - List of tuples (r, theta) representing polar coordinates.
+        """
+        polar_dict = {}
+
+        # Step 1: Shift coordinates to center of the image
+        shifted_coordinates = [(x - self.height//2, self.width//2 - y) for x, y in coordinates]
+
+        # Step 2: Convert shifted Cartesian coordinates to polar coordinates
+        polar_coordinates = [(np.sqrt(x**2 + y**2), round(np.arctan2(y, x),1)) for x, y in shifted_coordinates]
+        
+        l = len(polar_coordinates)
+        # Step 3: Check for duplicate theta, keep the smallest distance
+        for r, theta in polar_coordinates:
+            if theta in polar_dict:
+                # If a duplicate theta is encountered, keep the point with the shortest distance
+                if r < polar_dict[theta][0]:
+                    polar_dict[theta] = (r, theta)
+            else:
+                polar_dict[theta] = (r, theta)
+
+        polar_coordinates = list(polar_dict.values())
+        k = len(polar_coordinates)
+        # Step 4: Convert to Cartesian.
+        cartesian_coordinates = [[round(r * np.cos(theta)), round(r * np.sin(theta))] for r, theta in polar_coordinates]
+        # Step 5: Shift back
+        cartesian_coordinates = [[int(x+self.height//2), int(self.width//2 - y)] for x, y in cartesian_coordinates]
+
+        cartesian_coordinates = [[y,x] for x,y in cartesian_coordinates]
+        
+       # Step 6: sample
+        if len(cartesian_coordinates) > self.width//4:
+            diff = len(cartesian_coordinates) - self.width//4
+            for i in range(diff):
+                cartesian_coordinates.pop(i)
+        
+        return cartesian_coordinates
+
 
     
-    def find_highest_intensity_coordinates_per_row(self, image):
-        #Gets the edge.
-        # Read the image
+    # def find_first_highest_intensity_coordinates_per_row(self, image):
+    #     #Gets the edge.
+    #     # Read the image
 
-        # Get the number of rows and columns in the image
-        rows, cols = image.shape
+    #     # Get the number of rows and columns in the image
+    #     rows, cols = image.shape
 
-        # Initialize a list to store coordinates of the last non-zero pixel for each row
-        last_nonzero_coordinates_list = []
+    #     # Initialize a list to store coordinates of the last non-zero pixel for each row
+    #     last_nonzero_coordinates_list = []      
 
-        # Iterate through rows
-        for row_index in range(rows):
-            # Find the indices of non-zero elements in the current row
-            nonzero_indices = np.nonzero(image[row_index, :])
+    #     # Iterate through rows
+    #     for row_index in range(rows):
+    #         # Find the indices of non-zero elements in the current row
+    #         nonzero_indices = np.nonzero(image[row_index, :])
 
-            # Check if there are any non-zero elements in the row
-            if len(nonzero_indices[0]) > 0:
-                # Get the coordinates of the last non-zero element in the row
-                last_nonzero_col = nonzero_indices[0][0]
+    #         # Check if there are any non-zero elements in the row
+    #         if len(nonzero_indices[0]) > 0:
+    #             # Get the coordinates of the first non-zero element in the row
+    #             last_nonzero_col = nonzero_indices[0][0]
 
-                # Append the coordinates to the list
-                last_nonzero_coordinates_list.append((last_nonzero_col,row_index))
-
-        return last_nonzero_coordinates_list
-    
-    # def find_highest_intensity_coordinates_per_custom_row(self, image, sample_rate):
-    #         #Gets the edge.
-    #         # Read the image
-
-    #         # Get the number of rows and columns in the image
-    #         rows, cols = image.shape
-
-    #         # Initialize a list to store coordinates of the last non-zero pixel for each row
-    #         last_nonzero_coordinates_list = []
-
-    #         # Iterate through rows
-    #         for row_index in range(0,rows,sample_rate):
-    #             # Find the indices of non-zero elements in the current row
-    #             nonzero_indices = np.nonzero(image[row_index, :])
-
-    #             # Check if there are any non-zero elements in the row
-    #             if len(nonzero_indices[0]) > 0:
-    #                 # Get the coordinates of the last non-zero element in the row
-    #                 last_nonzero_col = nonzero_indices[0][0]
-
-    #                 # Append the coordinates to the list
-    #                 last_nonzero_coordinates_list.append((last_nonzero_col,row_index))
-
-    #         return last_nonzero_coordinates_list
+    #             # Append the coordinates to the list
+    #             last_nonzero_coordinates_list.append((last_nonzero_col,row_index))
+        
+    #     #Only take in number of points = f(costmap.length)
+    #     if len(last_nonzero_coordinates_list) > self.width//6:
+    #         diff = len(last_nonzero_coordinates_list) - self.width//6
+    #         for i in range(diff):
+    #             last_nonzero_coordinates_list.pop(-1)
+        
+    #     return last_nonzero_coordinates_list
 
     def plot_circles(self, coordinates_list, radius=1, color=155):
         # Plot just the edge.
@@ -152,15 +167,6 @@ class CostMapProcess:
 
         return image
     
-    # def stand_off(self, coordinates_list, image, radius = 1, color= 255):
-    #     # PLot the standoff.
-        
-    #     for coordinates in coordinates_list:
-    #         shifted_coordinates = (coordinates[0] - 10, coordinates[1])
-    #         center = tuple(shifted_coordinates)
-    #         cv2.circle(image, center, radius, color, 1)
-
-    #     return image
     
     def pub_path(self, shifted_coordinates):
         path = Path()
@@ -186,41 +192,6 @@ class CostMapProcess:
             path.poses.append(pose_stamped)
 
         return path
-    
-    # def remove_jumps(self, coordinates, window_size=10, threshold=1):
-    #     """
-    #     Remove sudden jumps from a list of coordinates using a moving average filter.
-
-    #     Parameters:
-    #     - coordinates: List of tuples (x, y).
-    #     - window_size: Size of the moving average window.
-    #     - threshold: Maximum allowable difference between the original and smoothed values.
-
-    #     Returns:
-    #     - List of filtered coordinates.
-    #     """
-    #     x_values, y_values = zip(*coordinates)
-
-    #     # Apply a moving average filter to smooth the data
-    #     # smoothed_y = np.convolve(y_values, np.ones(window_size) / window_size, mode='same')
-    #     smoothed_x = np.convolve(x_values, np.ones(window_size) / window_size, mode='same')
-
-
-    #     # Identify jumps based on the threshold
-    #     # jump_mask_y = np.abs(y_values - smoothed_y) > threshold
-    #     jump_mask_x = np.abs(x_values - smoothed_x) > threshold
-
-
-    #     # Replace jumped values with smoothed values
-    #     # filtered_y = np.where(jump_mask_y, smoothed_y, y_values)
-    #     filtered_x = np.where(jump_mask_x, smoothed_x, x_values)
-
-
-    #     # Create a list of filtered coordinates
-    #     filtered_coordinates = list(zip(filtered_x, y_values))
-        
-
-    #     return filtered_coordinates
     
     
 if __name__ == "__main__":
