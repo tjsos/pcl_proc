@@ -9,10 +9,16 @@ import cv2
 class CostMapProcess:
     def __init__(self) -> None:
         rospy.Subscriber("/move_base/local_costmap/costmap", OccupancyGrid, self.mapCB)
+        rospy.Subscriber("/alpha_rise/odometry/filtered/local", Odometry, self.odomCB)
 
         self.pub = rospy.Publisher("/stand_off_path", Path, queue_size=1)
 
         self.vx_y, self.vx_x, self.yaw = 0,0,0
+
+    def odomCB(self, message):
+        #Needed to update the path in odom_frame
+        self.vx_x = message.pose.pose.position.x
+        self.vx_y = message.pose.pose.position.y
 
     def mapCB(self, message):
         self.width = message.info.width
@@ -23,17 +29,6 @@ class CostMapProcess:
 
         self.resolution = message.info.resolution
         
-        x = message.info.origin.orientation.x
-        y = message.info.origin.orientation.y
-        z = message.info.origin.orientation.z
-        w = message.info.origin.orientation.w
-
-        norm =  np.linalg.norm([x,y,z,w])
-        q_normalised = [x,y,z,w]/norm
-        x,y,z,w =  q_normalised
-        yaw= np.arctan2(2 * (w * z + x * y), 1 - 2 * (y**2 + z**2))
-
-        self.yaw = yaw
 
         # Costmap to Image
         data = np.array(data).reshape(self.width,self.height)
@@ -43,30 +38,34 @@ class CostMapProcess:
         data = cv2.flip(data, 1)  
         data = cv2.rotate(data, cv2.ROTATE_90_CLOCKWISE)
 
-        
+        #Dilate Raw Measurements        
         dilate = cv2.dilate(data, (5,5), 2)
         dilate = cv2.dilate(dilate, (5,5), 2)
         dilate = cv2.dilate(dilate, (5,5), 2)
         dilate = cv2.dilate(dilate, (5,5), 2)
         dilate = cv2.dilate(dilate, (5,5), 2)
 
+        #Get Edge
         canny = cv2.Canny(dilate,200,255)
 
+        #Find cordinates of the edges
         pixels = self.find_cordinates_max_value(canny)
+
+        #Get usable edges
         cell_row = self.get_edges(pixels)
-
-        # cell_row_ = self.find_first_highest_intensity_coordinates_per_row(canny)
-
 
         #IMAGES
         edge = self.plot_circles(cell_row)
         
-        #PATH NOT FILTERD
+        #Compare the Canny and Custom
+        compare = self.compare_canny_edge(pixels, cell_row)
+        
+        #PATH
         path = self.pub_path(cell_row)
         self.pub.publish(path)
 
-        mix= np.hstack((data, dilate, canny, edge))
-
+        #Viz
+        mix= np.hstack((data, dilate, canny, edge, compare))
         cv2.imshow("window", mix)
         cv2.waitKey(1)
 
@@ -116,45 +115,12 @@ class CostMapProcess:
         cartesian_coordinates = [[y,x] for x,y in cartesian_coordinates]
         
        # Step 6: sample
-        if len(cartesian_coordinates) > self.width//4:
-            diff = len(cartesian_coordinates) - self.width//4
-            for i in range(diff):
-                cartesian_coordinates.pop(i)
+        # if len(cartesian_coordinates) > self.width//4:
+        #     diff = len(cartesian_coordinates) - self.width//4
+        #     for i in range(diff):
+        #         cartesian_coordinates.pop(i)
         
         return cartesian_coordinates
-
-
-    
-    # def find_first_highest_intensity_coordinates_per_row(self, image):
-    #     #Gets the edge.
-    #     # Read the image
-
-    #     # Get the number of rows and columns in the image
-    #     rows, cols = image.shape
-
-    #     # Initialize a list to store coordinates of the last non-zero pixel for each row
-    #     last_nonzero_coordinates_list = []      
-
-    #     # Iterate through rows
-    #     for row_index in range(rows):
-    #         # Find the indices of non-zero elements in the current row
-    #         nonzero_indices = np.nonzero(image[row_index, :])
-
-    #         # Check if there are any non-zero elements in the row
-    #         if len(nonzero_indices[0]) > 0:
-    #             # Get the coordinates of the first non-zero element in the row
-    #             last_nonzero_col = nonzero_indices[0][0]
-
-    #             # Append the coordinates to the list
-    #             last_nonzero_coordinates_list.append((last_nonzero_col,row_index))
-        
-    #     #Only take in number of points = f(costmap.length)
-    #     if len(last_nonzero_coordinates_list) > self.width//6:
-    #         diff = len(last_nonzero_coordinates_list) - self.width//6
-    #         for i in range(diff):
-    #             last_nonzero_coordinates_list.pop(-1)
-        
-    #     return last_nonzero_coordinates_list
 
     def plot_circles(self, coordinates_list, radius=1, color=155):
         # Plot just the edge.
@@ -167,6 +133,20 @@ class CostMapProcess:
 
         return image
     
+    def compare_canny_edge(self, list1, list2):
+        image = np.zeros((self.height, self.width), dtype=np.uint8)
+        # Iterate through the list of coordinates and draw circles
+        list1 = [(y,x) for x,y in list1]
+        
+        for coordinates in list1:
+            center = tuple(coordinates)
+            cv2.circle(image, center, 1, 100)
+
+        for coordinates in list2:
+            center = tuple(coordinates)
+            cv2.circle(image, center, 1, 255)
+        
+        return image
     
     def pub_path(self, shifted_coordinates):
         path = Path()
