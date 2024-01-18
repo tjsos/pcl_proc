@@ -108,11 +108,9 @@ class CostMapProcess:
         polar_coordinates = list(polar_dict.values())
         k = len(polar_coordinates)
         # Step 4: Convert to Cartesian.
-        cartesian_coordinates = [[round(r * np.cos(theta)), round(r * np.sin(theta))] for r, theta in polar_coordinates]
+        cartesian_coordinates = [[round(r * np.sin(theta)), round(r * np.cos(theta))] for r, theta in polar_coordinates]
         # Step 5: Shift back
-        cartesian_coordinates = [[int(x+self.height//2), int(self.width//2 - y)] for x, y in cartesian_coordinates]
-
-        cartesian_coordinates = [[y,x] for x,y in cartesian_coordinates]
+        cartesian_coordinates = [[int(self.width//2 - x),int(y+self.height//2),] for x, y in cartesian_coordinates]
         
        # Step 6: sample
         # if len(cartesian_coordinates) > self.width//4:
