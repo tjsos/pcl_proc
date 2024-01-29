@@ -68,21 +68,16 @@ class CostMapProcess:
         raw_pixels = self.find_cordinates_max_value(canny_image)
         #Get usable edges
         edge, edge_polar = self.get_edges(raw_pixels)
-        #Edges in vx_frame
-        vx_frame_edges = self.odom_to_vx_frame_tf(edge_polar)
-
-        #//To-Do : Fit line. Upsample?
-        #plot vx frame
-        vx_frame_image = self.plot_circles_vx_frame(vx_frame_edges)
+        #Image in Vx_frame
+        vx_frame_image = self.plot_circles_vx_frame(edge_polar)
         
         path_cells, path_cells_polar = self.curve_fit(vx_frame_image)
         odom_frame_path = self.vx_to_odom_frame_tf(path_cells_polar)
-        # print(odom_frame_path)
+
         """
         Path
         """
         self.pub_path(odom_frame_path)
-
 
         """
         Visualization
@@ -90,9 +85,10 @@ class CostMapProcess:
         ## plot in odom frame
         # edge_image = self.plot_circles(edge)
         ## Compare the Canny and Custom
-        compare = self.compare_two_lists(raw_pixels, odom_frame_path)
+        compare_path = self.compare_two_lists(raw_pixels, odom_frame_path)
+        compare_edges = self.compare_two_lists(raw_pixels, edge)
 
-        mix= np.hstack((data, canny_image, compare, vx_frame_image))
+        mix= np.hstack((data, canny_image, compare_edges, compare_path, vx_frame_image))
         cv2.imshow("window", mix)
         cv2.waitKey(1)
     
@@ -102,7 +98,7 @@ class CostMapProcess:
         
     def curve_fit(self, vx_frame):
         #Only interested in path frame
-        vx_frame_cropped = vx_frame[ :3*self.width//4, self.height//2:]
+        vx_frame_cropped = vx_frame[ :3*self.height//4, self.width//2:]
         img_cropped_cart = self.find_cordinates_max_value(vx_frame_cropped)
         if img_cropped_cart is not []:
             x_coordinates, y_coordinates = zip(*img_cropped_cart)
@@ -113,19 +109,21 @@ class CostMapProcess:
                 #GET LINE
                 x_model = np.linspace(min(x_coordinates), max(x_coordinates), 20)
                 y_model = self.model_f(x_model, a_opt, b_opt, c_opt,d_opt)
-                #Y here is X in Image frame
+                
+                #Fitting line on y axis.
                 cordinates_list_model = list(zip(y_model, x_model))
                 cordinates_list_model = [list(coord) for coord in cordinates_list_model]
 
                 #Shift back to image frame from cropped image
-                sampled_coordinates = [[round(x)+ self.height//2, round(y)] for x, y in cordinates_list_model]
+                sampled_coordinates = [[round(x) + self.height//2, round(y)] for x, y in cordinates_list_model]
                 
                 # Shift coordinates to center of the image
-                shifted_coordinates = [[x - self.height//2, self.width//2 - y] for x, y in sampled_coordinates]
+                shifted_coordinates = [(x - self.height//2, self.width//2 - y) for x, y in sampled_coordinates]
 
                 # Convert shifted Cartesian coordinates to polar coordinates
-                polar_coordinates = [[np.sqrt(x**2 + y**2), np.arctan2(x, y)]for x, y in shifted_coordinates]
+                polar_coordinates = [[np.sqrt(x**2 + y**2), np.arctan2(y, x)]for x, y in shifted_coordinates]
                 
+                #return original image (x,y) and polar cords when at center of image
                 return sampled_coordinates, polar_coordinates
 
             except RuntimeError:
@@ -135,37 +133,19 @@ class CostMapProcess:
 
     def vx_to_odom_frame_tf(self, polar_list):
         """
-        Transfer it to odom frame
+        Transfer it to odom frame.
         """
         vx_theta = self.yaw
+        # Discout vx_yaw
         for points in polar_list:
-             
-            if round(vx_theta) <= 0:
-                points[1] = self.roll_over_radians( -points[1] + vx_theta)
-            elif round(vx_theta) > 0:
-                points[1] = self.roll_over_radians( points[1] - vx_theta)
+                points[1] = self.roll_over_radians( points[1] + vx_theta)
 
-        # print(points[1])
-        cartesian_coordinates = [[abs(round(r * np.sin(theta))), round(r * np.cos(theta))] for r, theta in polar_list]
-        cartesian_coordinates = [[int(self.height//2 + x),int(self.width//2 - y),] for x, y in cartesian_coordinates]
+        # Convert to Cartesian (x,y)
+        cartesian_coordinates = [[round(r * np.cos(theta)), round(r * np.sin(theta))] for r, theta in polar_list]
+        # Shift back to Image frame
+        cartesian_coordinates = [[int(x+self.width//2),int(self.height//2 - y)] for x, y in cartesian_coordinates]
         # cartesian_coordinates = sorted(cartesian_coordinates, key=lambda coord: coord[1], reverse=True)
 
-        return cartesian_coordinates
-
-    def odom_to_vx_frame_tf(self, polar_list):
-        """
-        Transfer it to vehicle frame
-        """
-        yawd_p = [list(t) for t in polar_list]
-
-        vx_theta = self.yaw
-        for points in yawd_p:
-            points[1] = self.roll_over_radians(points[1] + np.float64(vx_theta))
-
-       # Step 4: Convert to Cartesian.
-        cartesian_coordinates = [[round(r * np.sin(theta)), round(r * np.cos(theta))] for r, theta in yawd_p]
-        # Step 5: Shift back
-        cartesian_coordinates = [[int(self.width//2 - x),int(y+self.height//2),] for x, y in cartesian_coordinates]
         return cartesian_coordinates
     
     def find_cordinates_max_value(self, image):
@@ -209,11 +189,12 @@ class CostMapProcess:
                 polar_dict[theta] = (r, theta)
 
         polar_coordinates = list(polar_dict.values())
-        # Step 4: Convert to Cartesian.
-        cartesian_coordinates = [[round(r * np.sin(theta)), round(r * np.cos(theta))] for r, theta in polar_coordinates]
+        # Step 4: Convert to Cartesian. (x, y)
+        cartesian_coordinates = [[round(r * np.cos(theta)), round(r * np.sin(theta))] for r, theta in polar_coordinates]
         # Step 5: Shift back
-        cartesian_coordinates = [[int(self.width//2 - x),int(y+self.height//2),] for x, y in cartesian_coordinates]
-        
+        cartesian_coordinates = [[int(x+self.width//2),int(self.height//2 - y),] for x, y in cartesian_coordinates]
+        # Helps in plotting.
+        cartesian_coordinates = [[y,x] for x,y in cartesian_coordinates]
        # Step 6: sample //TO-DO; Time based sampling.
         # if len(cartesian_coordinates) > self.width//4:
         #     diff = len(cartesian_coordinates) - self.width//4
@@ -240,10 +221,23 @@ class CostMapProcess:
         """
         Viz function with added vx axis
         """
+        yawd_p = [list(t) for t in coordinates_list]
+
+        vx_theta = self.yaw
+        for points in yawd_p:
+            points[1] = self.roll_over_radians(points[1] + np.float64(vx_theta))
+
+        # Convert to Cartesian.
+        cartesian_coordinates = [[round(r * np.cos(theta)), round(r * np.sin(theta))] for r, theta in yawd_p]
+        # Shift back to Image frame
+        cartesian_coordinates = [[int(x+self.width//2),int(self.height//2 - y)] for x, y in cartesian_coordinates]
+        # Plotting takes y,x
+        cartesian_coordinates = [[y,x] for x,y in cartesian_coordinates]
+
         # Create an empty image (numpy array)
         image = np.zeros((self.height, self.width), dtype=np.uint8)
         # Iterate through the list of coordinates and draw circles
-        for coordinates in coordinates_list:
+        for coordinates in cartesian_coordinates:
             center = tuple(coordinates)
             cv2.circle(image, center, radius, color, 1)
 
