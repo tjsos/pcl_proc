@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+
+#Author: Tony Jacob
+#Part of RISE Project. 
+#Generates curve, standoff curve of the iceberg from a costmap
+#tony.jacob@uri.edu
+
 import rospy
 from nav_msgs.msg import OccupancyGrid, Path, Odometry
 from geometry_msgs.msg import PoseStamped
@@ -14,10 +20,14 @@ class CostMapProcess:
 
         self.pub = rospy.Publisher("/stand_off_path", Path, queue_size=1)
 
-        self.vx_y, self.vx_x, self.yaw = 0,0,0
+        # Initialise vehicle state to 0
+        self.vx_y, self.vx_x, self.vx_yaw = 0,0,0
 
     def odomCB(self, message):
-        #Needed to update the path in odom_frame
+        """
+        Needed to update the path in odom_frame
+        """
+        # Get vehicle x,y
         self.vx_x = message.pose.pose.position.x
         self.vx_y = message.pose.pose.position.y
 
@@ -25,8 +35,8 @@ class CostMapProcess:
         y = message.pose.pose.orientation.y
         z = message.pose.pose.orientation.z
         w = message.pose.pose.orientation.w
-
-        self.yaw = math.atan2(2 * (w * z + x * y), 1 - 2 * (y**2 + z**2))
+        # Get vehicle yaw
+        self.vx_yaw = math.atan2(2 * (w * z + x * y), 1 - 2 * (y**2 + z**2))
 
     def mapCB(self, message):
         """
@@ -47,11 +57,11 @@ class CostMapProcess:
         data = np.array(data).reshape(self.width,self.height)
         data = data.astype(np.uint8)
 
-        #Corrected for Costmap FRAME -> IMage frame.
+        # Corrected for Costmap FRAME -> Image frame.
         data = cv2.flip(data, 1)  
         data = cv2.rotate(data, cv2.ROTATE_90_CLOCKWISE)
 
-        #Dilate Raw Measurements to get solid reading       
+        # Dilate Raw Measurements to get solid reading       
         dilate = cv2.dilate(data, (5,5), 2)
         dilate = cv2.dilate(dilate, (5,5), 2)
         dilate = cv2.dilate(dilate, (5,5), 2)
@@ -60,18 +70,19 @@ class CostMapProcess:
 
 
         """
-        Edges
+        Edges, Lines and Curves
         """
         #Get Edge
         canny_image = cv2.Canny(dilate,200,255)
         #Find cordinates of the edges
-        raw_pixels = self.find_cordinates_max_value(canny_image)
+        raw_pixels = self.find_cordinates_of_max_value(canny_image)
         #Get usable edges
-        edge, edge_polar = self.get_edges(raw_pixels)
-        #Image in Vx_frame
-        vx_frame_image = self.plot_circles_vx_frame(edge_polar)
-        
+        edge, edge_polar = self.get_usable_edges(raw_pixels)
+        #Image and points in Vx_frame
+        vx_frame_image, vx_frame_points = self.plot_circles_vx_frame(edge_polar)
+        # Fit the line
         path_cells, path_cells_polar = self.curve_fit(vx_frame_image)
+        # Project line in odom frame
         odom_frame_path = self.vx_to_odom_frame_tf(path_cells_polar)
 
         """
@@ -82,24 +93,36 @@ class CostMapProcess:
         """
         Visualization
         """
-        ## plot in odom frame
-        # edge_image = self.plot_circles(edge)
+
         ## Compare the Canny and Custom
         compare_path = self.compare_two_lists(raw_pixels, odom_frame_path)
         compare_edges = self.compare_two_lists(raw_pixels, edge)
 
-        mix= np.hstack((data, canny_image, compare_edges, compare_path, vx_frame_image))
+        mix= np.hstack((data, compare_edges, compare_path, vx_frame_image))
         cv2.imshow("window", mix)
         cv2.waitKey(1)
     
     def model_f(self,x, a, b, c, d):
+        """
+        The polynomial used to fit the points.
+        """
         # return a*(x-b)**2 + c
         return a*x**3 + b* x**2 +c*x +d
         
     def curve_fit(self, vx_frame):
-        #Only interested in path frame
-        vx_frame_cropped = vx_frame[ :3*self.height//4, self.width//2:]
-        img_cropped_cart = self.find_cordinates_max_value(vx_frame_cropped)
+        """
+        Fit the curve
+
+
+        Args:
+            vx_frame: Image depicting points in vehicle frame.
+        
+        Returns:
+            sampled_coordinates: List of fitted points in vehicle frame
+            polar_coordinates: List of fitted points in polar system with origin being center of image.
+        """
+        vx_frame_cropped = vx_frame[ :, self.width//2:]
+        img_cropped_cart = self.find_cordinates_of_max_value(vx_frame_cropped)
         if img_cropped_cart is not []:
             x_coordinates, y_coordinates = zip(*img_cropped_cart)
             try:
@@ -134,8 +157,15 @@ class CostMapProcess:
     def vx_to_odom_frame_tf(self, polar_list):
         """
         Transfer it to odom frame.
+
+        
+        Args:
+            polar_list: List of fitted points in polar system with origin being center of image
+
+        Returns:
+            cartesian_coordinates: List of fitted points in Odom frame
         """
-        vx_theta = self.yaw
+        vx_theta = self.vx_yaw
         # Discout vx_yaw
         for points in polar_list:
                 points[1] = self.roll_over_radians( points[1] + vx_theta)
@@ -148,9 +178,15 @@ class CostMapProcess:
 
         return cartesian_coordinates
     
-    def find_cordinates_max_value(self, image):
+    def find_cordinates_of_max_value(self, image):
         """
         Find cordinates of white pixels
+
+        Args:
+            image: Image after Canny edge detection.
+        
+        Returns:
+            max_intensity_coordinates: [[x,y]] of edges.
         """
         max_intensity = np.max(image)
 
@@ -162,14 +198,28 @@ class CostMapProcess:
     def roll_over_radians(self, angle, range_start=-math.pi, range_end=math.pi):
         """
         Wrap angles over [-pi, pi]
+
+
+        Args:
+            angle: Angle in radians.
+
+        Returns:
+            rolled_angle: Angle in radians.
         """
         rolled_angle = (angle - range_start) % (range_end - range_start) + range_start
         return rolled_angle
     
-    def get_edges(self, coordinates):
+    def get_usable_edges(self, coordinates):
         """
-        Use it to find the outer edge from the canny image. The resultant is the cordinates
-        max likelihood where the obstacle is.
+        Use it to find the outer edge from the canny image. 
+        The resultant is the cordinates of max likelihood where the obstacle is.
+
+        Args:
+            coordinates: [[x,y]] of edges from Image.
+
+        Returns:
+            cartesian_coordinates: List of points that are on the outer edge from canny image.
+            polar_coordinates: List of points [r, theta] from the center of the image. (Vehicle origin)
         """
         polar_dict = {}
 
@@ -203,27 +253,21 @@ class CostMapProcess:
         #
         # [x,y] [r,theta]
         return cartesian_coordinates, polar_coordinates
-
-    def plot_circles(self, coordinates_list, radius=1, color=155):
-        """
-        Viz function
-        """
-        # Create an empty image (numpy array)
-        image = np.zeros((self.height, self.width), dtype=np.uint8)
-        # Iterate through the list of coordinates and draw circles
-        for coordinates in coordinates_list:
-            center = tuple(coordinates)
-            cv2.circle(image, center, radius, color, 1)
-
-        return image
     
     def plot_circles_vx_frame(self, coordinates_list, radius=1, color=155):
         """
-        Viz function with added vx axis
+        Viz function with to show vehicle frame
+
+        Args:
+            coordinates_list: List of points in polar system.
+
+        Returns:
+            image: Image with points plotted in vehicle frame.
+            cartesian_coordinates: list of points in vehicle frame
         """
         yawd_p = [list(t) for t in coordinates_list]
 
-        vx_theta = self.yaw
+        vx_theta = self.vx_yaw
         for points in yawd_p:
             points[1] = self.roll_over_radians(points[1] + np.float64(vx_theta))
 
@@ -241,18 +285,26 @@ class CostMapProcess:
             center = tuple(coordinates)
             cv2.circle(image, center, radius, color, 1)
 
-        image = cv2.line(image, (0, 3*self.width//4), (200, 3*self.width//4), 100, 1)
+        # image = cv2.line(image, (0, 3*self.width//4), (200, 3*self.width//4), 100, 1)
         image = cv2.line(image, (100, 0), (100, 200), 100, 1)
 
         #Draw Vx frame
         # image = cv2.line(image, (self.width//2, self.height//2), (self.width//2, self.height//2-5), 200, 1)
         # image = cv2.line(image, (self.width//2, self.height//2), (self.width//2-5, self.height//2), 200, 1) 
 
-        return image
+        return image, cartesian_coordinates
     
     def compare_two_lists(self, list1, list2):
         """
         Viz function to plot the original canny and extracted edge
+
+        
+        Args:
+            list1: List of points (raw_pixels)
+            list2: List of points
+
+        Returns:
+            image: Image with points plotted.
         """
         image = np.zeros((self.height, self.width), dtype=np.uint8)
         # Iterate through the list of coordinates and draw circles
@@ -271,6 +323,10 @@ class CostMapProcess:
     def pub_path(self, shifted_coordinates):
         """
         Create and send the path message
+
+
+        Args:
+            shifted_coordinates: List of fitted points in odom frame
         """
         path = Path()
         
