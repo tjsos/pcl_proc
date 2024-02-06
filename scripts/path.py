@@ -6,8 +6,10 @@
 #tony.jacob@uri.edu
 
 import rospy
-from nav_msgs.msg import OccupancyGrid, Path, Odometry
-from geometry_msgs.msg import PoseStamped
+import tf2_ros
+from tf.transformations import euler_from_quaternion
+from nav_msgs.msg import OccupancyGrid, Path
+from geometry_msgs.msg import PoseStamped, TransformStamped
 import numpy as np
 import cv2
 import math
@@ -15,30 +17,36 @@ import scipy
 
 class CostMapProcess:
     def __init__(self) -> None:
+        #Path Publisher
+        self.pub = rospy.Publisher("/path", Path, queue_size=1)
+
+        #TF Buffer and Listener
+        self.buffer = tf2_ros.Buffer()
+        tf_listener = tf2_ros.TransformListener(self.buffer)
+        #TF BroadCaster
+        self.br = tf2_ros.TransformBroadcaster()
+
+        #Costmap subscriber.
         rospy.Subscriber("/move_base/local_costmap/costmap", OccupancyGrid, self.mapCB)
-        rospy.Subscriber("/alpha_rise/odometry/filtered/local", Odometry, self.odomCB)
-
-        self.pub = rospy.Publisher("/stand_off_path", Path, queue_size=1)
-
-        # Initialise vehicle state to 0
-        self.vx_y, self.vx_x, self.vx_yaw = 0,0,0
-
-    def odomCB(self, message):
-        """
-        Needed to update the path in odom_frame
-        """
-        # Get vehicle x,y
-        self.vx_x = message.pose.pose.position.x
-        self.vx_y = message.pose.pose.position.y
-
-        x = message.pose.pose.orientation.x
-        y = message.pose.pose.orientation.y
-        z = message.pose.pose.orientation.z
-        w = message.pose.pose.orientation.w
-        # Get vehicle yaw
-        self.vx_yaw = math.atan2(2 * (w * z + x * y), 1 - 2 * (y**2 + z**2))
 
     def mapCB(self, message):
+        """
+        Transform Stuff
+        """
+        self.buffer.can_transform('alpha_rise/base_link', 'alpha_rise/odom', rospy.Time(), rospy.Duration(4.0))
+        
+        #Get Odom->Vx TF
+        odom_vx_tf = self.buffer.lookup_transform('alpha_rise/base_link', 'alpha_rise/odom', rospy.Time())
+        self.vx_yaw = euler_from_quaternion([odom_vx_tf.transform.rotation.x,
+                                            odom_vx_tf.transform.rotation.y,
+                                            odom_vx_tf.transform.rotation.z,
+                                            odom_vx_tf.transform.rotation.w])[2]
+        
+        #Get Vx->Odom TF
+        vx_odom_tf = self.buffer.lookup_transform('alpha_rise/odom', 'alpha_rise/base_link', rospy.Time())
+        self.vx_x = vx_odom_tf.transform.translation.x
+        self.vx_y = vx_odom_tf.transform.translation.y
+
         """
         Costmap
         """
@@ -49,6 +57,37 @@ class CostMapProcess:
         self.time = message.header.stamp
 
         self.resolution = message.info.resolution
+
+        # Broadcast Odom-> Costmap TF
+        odom_costmap_tf = TransformStamped()
+        odom_costmap_tf.header.stamp = rospy.Time.now()
+        odom_costmap_tf.header.frame_id = 'alpha_rise/odom'
+        odom_costmap_tf.child_frame_id = 'alpha_rise/costmap'
+        odom_costmap_tf.transform.translation.x = message.info.origin.position.x
+        odom_costmap_tf.transform.translation.y = message.info.origin.position.y
+        odom_costmap_tf.transform.translation.z = 0
+        odom_costmap_tf.transform.rotation.x = 0
+        odom_costmap_tf.transform.rotation.y = 0
+        odom_costmap_tf.transform.rotation.z = 0
+        odom_costmap_tf.transform.rotation.w = 1
+
+        # Broadcast Costmap-> Costmap Image TF
+        odom_costmap_image_tf = TransformStamped()
+        odom_costmap_image_tf.header.stamp = rospy.Time.now()
+        odom_costmap_image_tf.header.frame_id = 'alpha_rise/costmap'
+        odom_costmap_image_tf.child_frame_id = 'alpha_rise/costmap/image'
+        # Width(cells) * resolution (meters/cell) = meters.
+        odom_costmap_image_tf.transform.translation.x = self.width * self.resolution
+        odom_costmap_image_tf.transform.translation.y = self.height * self.resolution
+        odom_costmap_image_tf.transform.translation.z = 0
+        odom_costmap_image_tf.transform.rotation.x = 0.7071
+        odom_costmap_image_tf.transform.rotation.y = -0.7072
+        odom_costmap_image_tf.transform.rotation.z = 0
+        odom_costmap_image_tf.transform.rotation.w = 0
+
+        self.br.sendTransform(odom_costmap_tf)
+        self.br.sendTransform(odom_costmap_image_tf)
+
         
         """
         Image
@@ -121,7 +160,7 @@ class CostMapProcess:
             sampled_coordinates: List of fitted points in vehicle frame
             polar_coordinates: List of fitted points in polar system with origin being center of image.
         """
-        vx_frame_cropped = vx_frame[ :, self.width//2:]
+        vx_frame_cropped = vx_frame[ :, :]
         img_cropped_cart = self.find_cordinates_of_max_value(vx_frame_cropped)
         if img_cropped_cart is not []:
             x_coordinates, y_coordinates = zip(*img_cropped_cart)
@@ -138,7 +177,7 @@ class CostMapProcess:
                 cordinates_list_model = [list(coord) for coord in cordinates_list_model]
 
                 #Shift back to image frame from cropped image
-                sampled_coordinates = [[round(x) + self.height//2, round(y)] for x, y in cordinates_list_model]
+                sampled_coordinates = [[round(x), round(y)] for x, y in cordinates_list_model]
                 
                 # Shift coordinates to center of the image
                 shifted_coordinates = [(x - self.height//2, self.width//2 - y) for x, y in sampled_coordinates]
@@ -168,7 +207,7 @@ class CostMapProcess:
         vx_theta = self.vx_yaw
         # Discout vx_yaw
         for points in polar_list:
-                points[1] = self.roll_over_radians( points[1] + vx_theta)
+                points[1] = self.roll_over_radians( points[1] - vx_theta)
 
         # Convert to Cartesian (x,y)
         cartesian_coordinates = [[round(r * np.cos(theta)), round(r * np.sin(theta))] for r, theta in polar_list]
@@ -219,7 +258,7 @@ class CostMapProcess:
 
         Returns:
             cartesian_coordinates: List of points that are on the outer edge from canny image.
-            polar_coordinates: List of points [r, theta] from the center of the image. (Vehicle origin)
+            polar_coordinates: List of points [r, theta] from the center of the image. (Odom frame, vx as origin)
         """
         polar_dict = {}
 
@@ -254,12 +293,12 @@ class CostMapProcess:
         # [x,y] [r,theta]
         return cartesian_coordinates, polar_coordinates
     
-    def plot_circles_vx_frame(self, coordinates_list, radius=1, color=155):
+    def plot_circles_vx_frame(self, coordinates_list, radius=1, color=255):
         """
         Viz function with to show vehicle frame
 
         Args:
-            coordinates_list: List of points in polar system.
+            coordinates_list: List of points in polar system in Odom frame.
 
         Returns:
             image: Image with points plotted in vehicle frame.
@@ -269,7 +308,7 @@ class CostMapProcess:
 
         vx_theta = self.vx_yaw
         for points in yawd_p:
-            points[1] = self.roll_over_radians(points[1] + np.float64(vx_theta))
+            points[1] = self.roll_over_radians(points[1] - np.float64(vx_theta))
 
         # Convert to Cartesian.
         cartesian_coordinates = [[round(r * np.cos(theta)), round(r * np.sin(theta))] for r, theta in yawd_p]
@@ -286,7 +325,7 @@ class CostMapProcess:
             cv2.circle(image, center, radius, color, 1)
 
         # image = cv2.line(image, (0, 3*self.width//4), (200, 3*self.width//4), 100, 1)
-        image = cv2.line(image, (100, 0), (100, 200), 100, 1)
+        # image = cv2.line(image, (100, 0), (100, 200), 100, 1)
 
         #Draw Vx frame
         # image = cv2.line(image, (self.width//2, self.height//2), (self.width//2, self.height//2-5), 200, 1)
@@ -351,7 +390,6 @@ class CostMapProcess:
             path.poses.append(pose_stamped)
 
         self.pub.publish(path)
-    
     
 if __name__ == "__main__":
     rospy.init_node('path_node')
