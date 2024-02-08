@@ -12,13 +12,21 @@ class Processing:
         is_stonefish = rospy.get_param("pcl_filter/stonefish", True)
         if is_stonefish:
             sub_topic = rospy.get_param("pcl_filter/sf_sub_topic", '/alpha_rise/msis/stonefish/data/pointcloud')
-            self.radial_filter = rospy.get_param("pcl_filter/sf_radial_filter_param", 5)
             self.std_dev_multiplier = rospy.get_param("pcl_filter/sf_std_dev_multiplier", 2.5)
+            #This param is in meters.
+            self.radial_filter = rospy.get_param("pcl_filter/sf_radial_filter_param", 5)
+            range_max = rospy.get_param("/stonefish/range_max", 50)
+            number_of_bins = rospy.get_param("/stonefish/number_of_bins", 100)
+            
         else:
             sub_topic = rospy.get_param("pcl_filter/sf_sub_topic", '/alpha_rise/msis/pointcloud')
             self.std_dev_multiplier = rospy.get_param("pcl_filter/std_dev_multiplier", 2.55)
+            #This param is in meters.
             self.radial_filter = rospy.get_param("pcl_filter/radial_filter_param", 120)
-
+            range_max = rospy.get_param("/ping360_sonar/range_max", 50)
+            number_of_bins = rospy.get_param("/ping360_sonar/number_of_bins", 100)
+        #This(m/bin) is to compare index(bin) with radial filter param(m)
+        self.bin_meter_coeff = range_max/number_of_bins
         rospy.Subscriber(sub_topic, PointCloud2, self.pointcloud_callback)
         # rospy.Subscriber('/alpha_rise/msis/pointcloud', PointCloud2, self.pointcloud_callback)
         
@@ -36,17 +44,17 @@ class Processing:
         pcl_msg.is_dense = pointcloud_msg.is_dense
 
 
-        mean, std_dev, intensities = self.get_intensities(pointcloud_msg=pointcloud_msg)
-    
+        mean, std_dev, median, intensities = self.get_intensities(pointcloud_msg=pointcloud_msg)
         # Populate filtered pointclouds.
         points = np.zeros((pcl_msg.width,len(pcl_msg.fields)),dtype=np.float32)
         for index,point in enumerate(pc2.read_points(pointcloud_msg, skip_nans=True)):
-            if index >= self.radial_filter: #120 real, 5 for stnfsh
+            # Compare in meters. Not bins
+            if index*self.bin_meter_coeff >= self.radial_filter: #120 real, 5 for stnfsh
                 ##Total bins = 1200. Set range = 20m. 1m = 60bins.
                 ## Stonefish; bins = 100. Set range = 50m. 1m = 2 bins
                 x, y, z, i = point[:4]
                 #Filter
-                if i > mean+self.std_dev_multiplier *std_dev:              
+                if i > mean+self.std_dev_multiplier *std_dev and i > 20:              
                     points[index][0] = x
                     points[index][1] = y
                     points[index][3] = i
@@ -65,6 +73,7 @@ class Processing:
     def get_intensities(self,pointcloud_msg):
         """
         Returns the mean, std_dev and the echo intensity arrays.
+        #To:DO Prpbably try out median filtering
         """
         intensities = []
         for index,point in enumerate(pc2.read_points(pointcloud_msg, skip_nans=True)):
@@ -73,7 +82,8 @@ class Processing:
         intensities = np.array(intensities)
         mean = np.mean(intensities)
         std_dev = np.std(intensities)
-        return mean, std_dev, intensities.tolist()
+        median = np.std(intensities)
+        return mean, std_dev, median, intensities.tolist()
     
 if __name__ == '__main__':
     rospy.init_node('pointcloud_filter', anonymous=True)
