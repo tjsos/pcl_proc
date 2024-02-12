@@ -119,8 +119,10 @@ class CostMapProcess:
         edge, edge_polar = self.get_usable_edges(raw_pixels)
         #Image and points in Vx_frame
         vx_frame_image, vx_frame_points = self.plot_circles_vx_frame(edge_polar)
+        #Standoff
+        x_list, y_list = self.edge_shifting(vx_frame_image)
         # Fit the line
-        path_cells, path_cells_polar = self.curve_fit(vx_frame_image)
+        path_cells, path_cells_polar = self.curve_fit(x_list, y_list)
         # Project line in odom frame
         odom_frame_path = self.vx_to_odom_frame_tf(path_cells_polar)
 
@@ -148,7 +150,82 @@ class CostMapProcess:
         # return a*(x-b)**2 + c
         return a*x**3 + b* x**2 +c*x +d
         
-    def curve_fit(self, vx_frame):
+    def edge_shifting(self, vx_frame):
+        vx_frame_cropped = vx_frame[ :, :]
+        new_origin = []
+        img_cropped_cart = self.find_cordinates_of_max_value(vx_frame_cropped)
+        #New origin from list of points.
+        x_coordinates, y_coordinates = zip(*img_cropped_cart)
+        min_x = min(x_coordinates)
+        for pair in img_cropped_cart:
+            # Check if the first element of the pair matches the given x_value
+            if pair[0] == min_x:
+                # Return the corresponding y value
+                min_y = pair[1]
+        new_origin.append(min_x)
+        new_origin.append(min_y)
+        #VX_FRAME_IMAGE -> PATH FRAME
+        x_path_frame_list = []
+        y_path_frame_list = []
+
+        for coords in img_cropped_cart:
+            shifted_x = coords[0] - new_origin[0]
+            shifted_y = coords[1] - new_origin[1]
+            x_path_frame_list.append(shifted_x)
+            y_path_frame_list.append(shifted_y)
+
+        #LINEAR REGESH
+        slope, intercept, r_value, p_value, std_err = scipy.stats.linregress(x_path_frame_list, y_path_frame_list)
+        # y_path_frame_list = [slope * x + intercept for x in x_path_frame_list]
+        lingres  = [[x, y] for x, y in zip(x_path_frame_list, y_path_frame_list)]
+        #PATH_FRAME -> BEST_FIT_LINE_FRAME
+        x_line_frame_list, y_line_frame_list = self.rotate_points(lingres, math.degrees(math.atan(slope)))
+        #SHIFT BY Y Standoff
+        y_line_frame_list = [y - 12*1/self.resolution for y in y_line_frame_list]
+        #BEST_FIT_LINE_FRAME -> PATH FRAME
+        lingres  = [[x, y] for x, y in zip(x_line_frame_list, y_line_frame_list)]
+        x_path_frame_list, y_path_frame_list = self.rotate_points(lingres, math.degrees(math.atan(-slope)))
+        #PATH_FRAME -> VX_FRAME_IMAGE
+        x_vx_frame = []
+        y_vx_frame = []
+        path_frame = [[x, y] for x, y in zip(x_path_frame_list, y_path_frame_list)]
+
+        for coords in path_frame:
+            shifted_x = coords[0] + new_origin[0]
+            shifted_y = coords[1] + new_origin[1]
+            x_vx_frame.append(shifted_x)
+            y_vx_frame.append(shifted_y)
+        
+        return x_vx_frame, y_vx_frame
+
+    def rotate_points(self, points, angle_degrees):
+        # Convert angle from degrees to radians
+        angle_radians = math.radians(angle_degrees)
+        
+        # Define the rotation matrix
+        rotation_matrix = [
+            [math.cos(angle_radians), -math.sin(angle_radians)],
+            [math.sin(angle_radians), math.cos(angle_radians)]
+        ]
+        
+        # Initialize a list to store rotated points
+        x_list = []
+        y_list = []
+
+        
+        # Apply rotation to each point
+        for point in points:
+            # Perform matrix multiplication to rotate the point
+            rotated_x = rotation_matrix[0][0] * point[0] + rotation_matrix[0][1] * point[1]
+            rotated_y = rotation_matrix[1][0] * point[0] + rotation_matrix[1][1] * point[1]
+            
+            # Append rotated point to the list
+            x_list.append(round(rotated_x))
+            y_list.append(round(rotated_y))
+        
+        return x_list, y_list
+       
+    def curve_fit(self, x_coordinates, y_coordinates):
         """
         Fit the curve
 
@@ -160,37 +237,33 @@ class CostMapProcess:
             sampled_coordinates: List of fitted points in vehicle frame
             polar_coordinates: List of fitted points in polar system with origin being center of image.
         """
-        vx_frame_cropped = vx_frame[ :, :]
-        img_cropped_cart = self.find_cordinates_of_max_value(vx_frame_cropped)
-        if img_cropped_cart is not []:
-            x_coordinates, y_coordinates = zip(*img_cropped_cart)
-            try:
-                #FIT THE CURVE
-                p_opt, p_cov = scipy.optimize.curve_fit(self.model_f, x_coordinates, y_coordinates)
-                a_opt, b_opt, c_opt, d_opt = p_opt
-                #GET LINE
-                x_model = np.linspace(min(x_coordinates), max(x_coordinates), 20)
-                y_model = self.model_f(x_model, a_opt, b_opt, c_opt,d_opt)
-                
-                #Fitting line on y axis.
-                cordinates_list_model = list(zip(y_model, x_model))
-                cordinates_list_model = [list(coord) for coord in cordinates_list_model]
+        try:
+            #FIT THE CURVE
+            p_opt, p_cov = scipy.optimize.curve_fit(self.model_f, x_coordinates, y_coordinates)
+            a_opt, b_opt, c_opt, d_opt = p_opt
+            #GET LINE
+            x_model = np.linspace(min(x_coordinates), max(x_coordinates), 20)
+            y_model = self.model_f(x_model, a_opt, b_opt, c_opt,d_opt)
+            
+            #Fitting line on y axis.
+            cordinates_list_model = list(zip(y_model, x_model))
+            cordinates_list_model = [list(coord) for coord in cordinates_list_model]
 
-                #Shift back to image frame from cropped image
-                sampled_coordinates = [[round(x), round(y)] for x, y in cordinates_list_model]
-                
-                # Shift coordinates to center of the image
-                shifted_coordinates = [(x - self.height//2, self.width//2 - y) for x, y in sampled_coordinates]
+            #Shift back to image frame from cropped image
+            sampled_coordinates = [[round(x), round(y)] for x, y in cordinates_list_model]
+            
+            # Shift coordinates to center of the image
+            shifted_coordinates = [(x - self.height//2, self.width//2 - y) for x, y in sampled_coordinates]
 
-                # Convert shifted Cartesian coordinates to polar coordinates
-                polar_coordinates = [[np.sqrt(x**2 + y**2), np.arctan2(y, x)]for x, y in shifted_coordinates]
-                
-                #return original image (x,y) and polar cords when at center of image
-                return sampled_coordinates, polar_coordinates
+            # Convert shifted Cartesian coordinates to polar coordinates
+            polar_coordinates = [[np.sqrt(x**2 + y**2), np.arctan2(y, x)]for x, y in shifted_coordinates]
+            
+            #return original image (x,y) and polar cords when at center of image
+            return sampled_coordinates, polar_coordinates
 
-            except RuntimeError:
-                print("No solution found")
-                return [],[]
+        except RuntimeError:
+            print("No solution found")
+            return [],[]
 
 
     def vx_to_odom_frame_tf(self, polar_list):
