@@ -7,7 +7,7 @@
 
 import rospy
 import tf2_ros
-from tf.transformations import euler_from_quaternion
+import tf.transformations as tf_transform
 from nav_msgs.msg import OccupancyGrid, Path
 from geometry_msgs.msg import PoseStamped, TransformStamped
 import numpy as np
@@ -37,7 +37,7 @@ class CostMapProcess:
         
         #Get Odom->Vx TF
         odom_vx_tf = self.buffer.lookup_transform('alpha_rise/base_link', 'alpha_rise/odom', rospy.Time())
-        self.vx_yaw = euler_from_quaternion([odom_vx_tf.transform.rotation.x,
+        self.vx_yaw = tf_transform.euler_from_quaternion([odom_vx_tf.transform.rotation.x,
                                             odom_vx_tf.transform.rotation.y,
                                             odom_vx_tf.transform.rotation.z,
                                             odom_vx_tf.transform.rotation.w])[2]
@@ -72,21 +72,21 @@ class CostMapProcess:
         odom_costmap_tf.transform.rotation.w = 1
 
         # Broadcast Costmap-> Costmap Image TF
-        odom_costmap_image_tf = TransformStamped()
-        odom_costmap_image_tf.header.stamp = rospy.Time.now()
-        odom_costmap_image_tf.header.frame_id = 'alpha_rise/costmap'
-        odom_costmap_image_tf.child_frame_id = 'alpha_rise/costmap/image'
+        costmap_costmap_image_tf = TransformStamped()
+        costmap_costmap_image_tf.header.stamp = rospy.Time.now()
+        costmap_costmap_image_tf.header.frame_id = 'alpha_rise/costmap'
+        costmap_costmap_image_tf.child_frame_id = 'alpha_rise/costmap/image'
         # Width(cells) * resolution (meters/cell) = meters.
-        odom_costmap_image_tf.transform.translation.x = self.width * self.resolution
-        odom_costmap_image_tf.transform.translation.y = self.height * self.resolution
-        odom_costmap_image_tf.transform.translation.z = 0
-        odom_costmap_image_tf.transform.rotation.x = 0.7071
-        odom_costmap_image_tf.transform.rotation.y = -0.7072
-        odom_costmap_image_tf.transform.rotation.z = 0
-        odom_costmap_image_tf.transform.rotation.w = 0
+        costmap_costmap_image_tf.transform.translation.x = self.width * self.resolution
+        costmap_costmap_image_tf.transform.translation.y = self.height * self.resolution
+        costmap_costmap_image_tf.transform.translation.z = 0
+        costmap_costmap_image_tf.transform.rotation.x = 0.7071
+        costmap_costmap_image_tf.transform.rotation.y = -0.7072
+        costmap_costmap_image_tf.transform.rotation.z = 0
+        costmap_costmap_image_tf.transform.rotation.w = 0
 
         self.br.sendTransform(odom_costmap_tf)
-        self.br.sendTransform(odom_costmap_image_tf)
+        self.br.sendTransform(costmap_costmap_image_tf)
 
         
         """
@@ -152,7 +152,7 @@ class CostMapProcess:
         
     def edge_shifting(self, vx_frame):
         vx_frame_cropped = vx_frame[ :, :]
-        new_origin = []
+        self.new_origin = []
         img_cropped_cart = self.find_cordinates_of_max_value(vx_frame_cropped)
         #New origin from list of points.
         x_coordinates, y_coordinates = zip(*img_cropped_cart)
@@ -162,41 +162,29 @@ class CostMapProcess:
             if pair[0] == min_x:
                 # Return the corresponding y value
                 min_y = pair[1]
-        new_origin.append(min_x)
-        new_origin.append(min_y)
+        self.new_origin.append(min_x)
+        self.new_origin.append(min_y)
+
         #VX_FRAME_IMAGE -> PATH FRAME
         x_path_frame_list = []
         y_path_frame_list = []
 
         for coords in img_cropped_cart:
-            shifted_x = coords[0] - new_origin[0]
-            shifted_y = coords[1] - new_origin[1]
+            shifted_x = coords[0] - self.new_origin[0]
+            shifted_y = coords[1] - self.new_origin[1]
             x_path_frame_list.append(shifted_x)
             y_path_frame_list.append(shifted_y)
 
         #LINEAR REGESH
-        slope, intercept, r_value, p_value, std_err = scipy.stats.linregress(x_path_frame_list, y_path_frame_list)
+        self.slope, intercept, r_value, p_value, std_err = scipy.stats.linregress(x_path_frame_list, y_path_frame_list)
         # y_path_frame_list = [slope * x + intercept for x in x_path_frame_list]
         lingres  = [[x, y] for x, y in zip(x_path_frame_list, y_path_frame_list)]
         #PATH_FRAME -> BEST_FIT_LINE_FRAME
-        x_line_frame_list, y_line_frame_list = self.rotate_points(lingres, math.degrees(math.atan(slope)))
+        x_line_frame_list, y_line_frame_list = self.rotate_points(lingres, math.degrees(math.atan(self.slope)))
         #SHIFT BY Y Standoff
-        y_line_frame_list = [y - 12*1/self.resolution for y in y_line_frame_list]
-        #BEST_FIT_LINE_FRAME -> PATH FRAME
-        lingres  = [[x, y] for x, y in zip(x_line_frame_list, y_line_frame_list)]
-        x_path_frame_list, y_path_frame_list = self.rotate_points(lingres, math.degrees(math.atan(-slope)))
-        #PATH_FRAME -> VX_FRAME_IMAGE
-        x_vx_frame = []
-        y_vx_frame = []
-        path_frame = [[x, y] for x, y in zip(x_path_frame_list, y_path_frame_list)]
-
-        for coords in path_frame:
-            shifted_x = coords[0] + new_origin[0]
-            shifted_y = coords[1] + new_origin[1]
-            x_vx_frame.append(shifted_x)
-            y_vx_frame.append(shifted_y)
+        y_line_frame_list = [y - 0*1/self.resolution for y in y_line_frame_list]
         
-        return x_vx_frame, y_vx_frame
+        return x_line_frame_list, y_line_frame_list
 
     def rotate_points(self, points, angle_degrees):
         # Convert angle from degrees to radians
@@ -244,22 +232,26 @@ class CostMapProcess:
             #GET LINE
             x_model = np.linspace(min(x_coordinates), max(x_coordinates), 20)
             y_model = self.model_f(x_model, a_opt, b_opt, c_opt,d_opt)
-            
-            #Fitting line on y axis.
-            cordinates_list_model = list(zip(y_model, x_model))
-            cordinates_list_model = [list(coord) for coord in cordinates_list_model]
+            #LINE FRAME->PATH_FRAME
+            lingres  = [[x, y] for x, y in zip(x_model, y_model)]
+            x_path_frame_list, y_path_frame_list = self.rotate_points(lingres, math.degrees(math.atan(-self.slope)))
+            #PATH_FRAME -> VX_FRAME_IMAGE
+            vx_frame_model = []
+            path_frame = [[x, y] for x, y in zip(x_path_frame_list, y_path_frame_list)]
 
-            #Shift back to image frame from cropped image
-            sampled_coordinates = [[round(x), round(y)] for x, y in cordinates_list_model]
+            for coords in path_frame:
+                shifted_x = coords[0] + self.new_origin[0]
+                shifted_y = coords[1] + self.new_origin[1]
+                vx_frame_model.append([shifted_y, shifted_x])
             
             # Shift coordinates to center of the image
-            shifted_coordinates = [(x - self.height//2, self.width//2 - y) for x, y in sampled_coordinates]
+            shifted_coordinates = [(x - self.height//2, self.width//2 - y) for x, y in vx_frame_model]
 
             # Convert shifted Cartesian coordinates to polar coordinates
             polar_coordinates = [[np.sqrt(x**2 + y**2), np.arctan2(y, x)]for x, y in shifted_coordinates]
             
             #return original image (x,y) and polar cords when at center of image
-            return sampled_coordinates, polar_coordinates
+            return vx_frame_model, polar_coordinates
 
         except RuntimeError:
             print("No solution found")
