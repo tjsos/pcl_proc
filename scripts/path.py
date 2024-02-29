@@ -19,7 +19,7 @@ class CostMapProcess:
     def __init__(self) -> None:
         #Path Publisher
         self.pub = rospy.Publisher("/path", Path, queue_size=1)
-
+        
         #TF Buffer and Listener
         self.buffer = tf2_ros.Buffer()
         tf_listener = tf2_ros.TransformListener(self.buffer)
@@ -41,7 +41,7 @@ class CostMapProcess:
                                             odom_vx_tf.transform.rotation.y,
                                             odom_vx_tf.transform.rotation.z,
                                             odom_vx_tf.transform.rotation.w])[2]
-        
+        # self.vx_yaw = self.vx_yaw - math.radians(45.0)
         #Get Vx->Odom TF
         vx_odom_tf = self.buffer.lookup_transform('alpha_rise/odom', 'alpha_rise/base_link', rospy.Time())
         self.vx_x = vx_odom_tf.transform.translation.x
@@ -120,11 +120,11 @@ class CostMapProcess:
         #Image and points in Vx_frame
         vx_frame_image, vx_frame_points = self.plot_circles_vx_frame(edge_polar)
         #Standoff
-        x_list, y_list = self.edge_shifting(vx_frame_image)
+        x_list, y_list, debug_image, path_frame_debug = self.edge_shifting(vx_frame_image)
         # Fit the line
-        path_cells, path_cells_polar = self.curve_fit(x_list, y_list)
+        path_cells = self.curve_fit(x_list, y_list)
         # Project line in odom frame
-        odom_frame_path = self.vx_to_odom_frame_tf(path_cells_polar)
+        odom_frame_path = self.vx_to_odom_frame_tf(path_cells)
 
         """
         Path
@@ -137,54 +137,115 @@ class CostMapProcess:
 
         ## Compare the Canny and Custom
         compare_path = self.compare_two_lists(raw_pixels, odom_frame_path)
-        compare_edges = self.compare_two_lists(raw_pixels, edge)
+        viz_edges = self.compare_two_lists(raw_pixels, edge)
+        compare_edge = self.compare_edge(vx_frame_image, path_cells)
 
-        mix= np.hstack((data, compare_edges, compare_path, vx_frame_image))
+        mix= np.hstack((data, viz_edges, compare_path, compare_edge))
         cv2.imshow("window", mix)
+        cv2.imshow("debug", debug_image)
+        cv2.imshow("path_frame", path_frame_debug)
         cv2.waitKey(1)
+
     
-    def model_f(self,x, a, b, c, d):
+    def model_f(self,x, a, b, c):
         """
         The polynomial used to fit the points.
         """
         # return a*(x-b)**2 + c
-        return a*x**3 + b* x**2 +c*x +d
+        return a*x**2 + b* x**1 +c
         
     def edge_shifting(self, vx_frame):
-        vx_frame_cropped = vx_frame[ :, :]
+        vx_frame_cropped = vx_frame[ :, self.width//2 :]       
+        """        
+        ------>xVEHICLE COSTMAP IMAGE
+        |
+        |
+        |
+       yV
+        """
         self.new_origin = []
         img_cropped_cart = self.find_cordinates_of_max_value(vx_frame_cropped)
-        #New origin from list of points.
-        x_coordinates, y_coordinates = zip(*img_cropped_cart)
-        min_x = min(x_coordinates)
-        for pair in img_cropped_cart:
-            # Check if the first element of the pair matches the given x_value
-            if pair[0] == min_x:
-                # Return the corresponding y value
-                min_y = pair[1]
-        self.new_origin.append(min_x)
-        self.new_origin.append(min_y)
-
-        #VX_FRAME_IMAGE -> PATH FRAME
-        x_path_frame_list = []
-        y_path_frame_list = []
-
-        for coords in img_cropped_cart:
-            shifted_x = coords[0] - self.new_origin[0]
-            shifted_y = coords[1] - self.new_origin[1]
-            x_path_frame_list.append(shifted_x)
-            y_path_frame_list.append(shifted_y)
-
-        #LINEAR REGESH
-        self.slope, intercept, r_value, p_value, std_err = scipy.stats.linregress(x_path_frame_list, y_path_frame_list)
-        # y_path_frame_list = [slope * x + intercept for x in x_path_frame_list]
-        lingres  = [[x, y] for x, y in zip(x_path_frame_list, y_path_frame_list)]
-        #PATH_FRAME -> BEST_FIT_LINE_FRAME
-        x_line_frame_list, y_line_frame_list = self.rotate_points(lingres, math.degrees(math.atan(self.slope)))
-        #SHIFT BY Y Standoff
-        y_line_frame_list = [y - 0*1/self.resolution for y in y_line_frame_list]
         
-        return x_line_frame_list, y_line_frame_list
+        debug = np.zeros((self.height, self.width//2,3), dtype=np.uint8)
+        path_frame_debug = np.zeros((self.height, self.width,3), dtype=np.uint8)
+        
+        for coordinates in img_cropped_cart:
+            center = tuple(coordinates)
+            cv2.circle(debug, center, 1, (255,255,255), 1)
+        
+        if len(img_cropped_cart) > 2:
+            #New origin from list of points.
+            x_coordinates, y_coordinates = zip(*img_cropped_cart)
+            
+            
+            min_y = min(y_coordinates)
+            for pair in img_cropped_cart:
+                # Check if the first element of the pair matches the given x_value
+                if pair[1] == min_y:
+                    # Return the corresponding y value
+                    min_x = pair[0]
+            self.new_origin.append(min_x)
+            self.new_origin.append(min_y)
+            cv2.circle(debug, (min_x, min_y), 1, (0,255,0), 1)
+            #VX_FRAME_IMAGE -> PATH FRAME
+            x_path_frame_list = []
+            y_path_frame_list = []
+
+            for coords in img_cropped_cart:
+                shifted_x = coords[0] - self.new_origin[0]
+                shifted_y = coords[1] - self.new_origin[1]
+                x_path_frame_list.append(shifted_x)
+                y_path_frame_list.append(shifted_y)
+            # x_path_frame_list = x_coordinates
+            # y_path_frame_list = y_coordinates
+            
+            
+            """        
+            ------>x VEHICLE COSTMAP IMAGE
+            |         ->x PATH FRAME
+            |        yV
+            |
+            yV
+            """
+
+            #LINEAR REGESH
+            self.slope, intercept, r_value, p_value, std_err = scipy.stats.linregress(x_path_frame_list, y_path_frame_list)
+            
+            lin_regress_debug = [round((self.slope) * x  + intercept) for x in x_path_frame_list]
+  
+            for cords in zip(x_path_frame_list,y_path_frame_list ):
+                center = tuple(cords)
+                cv2.circle(path_frame_debug, center, 1, (255,255,255), 1)
+            for cords in zip(x_path_frame_list, lin_regress_debug):
+                center = tuple(cords)
+                cv2.circle(path_frame_debug, center, 1, (0,0,255), 1)
+
+            self.slope = -(self.slope)
+            
+            print(f"Slope {self.slope}, Yaw {math.degrees(self.vx_yaw)}")
+            
+            lingres  = [[x, y] for x, y in zip(x_path_frame_list, y_path_frame_list)]
+            #PATH_FRAME -> BEST_FIT_LINE_FRAME
+            x_line_frame_list, y_line_frame_list = self.rotate_points(lingres, math.degrees(math.atan((self.slope))))
+            """        
+            ------>xCOSTMAP IMAGE
+            |         ->x LINE FRAME    
+            |        yV
+            |
+        yV
+            """
+            distance_in_meters = 20
+            self.distance_in_cells = distance_in_meters*1/self.resolution
+            
+            if self.slope <=0.0:
+                y_line_frame_list = [y + self.distance_in_cells for y in y_line_frame_list]
+            else:
+            #SHIFT BY Y Standoff
+                y_line_frame_list = [y - self.distance_in_cells for y in y_line_frame_list]
+            
+        else:
+            x_line_frame_list = y_line_frame_list = 0    
+        return x_line_frame_list, y_line_frame_list, debug, path_frame_debug
 
     def rotate_points(self, points, angle_degrees):
         # Convert angle from degrees to radians
@@ -208,8 +269,8 @@ class CostMapProcess:
             rotated_y = rotation_matrix[1][0] * point[0] + rotation_matrix[1][1] * point[1]
             
             # Append rotated point to the list
-            x_list.append(round(rotated_x))
-            y_list.append(round(rotated_y))
+            x_list.append((rotated_x))
+            y_list.append((rotated_y))
         
         return x_list, y_list
        
@@ -228,13 +289,28 @@ class CostMapProcess:
         try:
             #FIT THE CURVE
             p_opt, p_cov = scipy.optimize.curve_fit(self.model_f, x_coordinates, y_coordinates)
-            a_opt, b_opt, c_opt, d_opt = p_opt
+            """        
+            ------>xCOSTMAP IMAGE
+            |         ->x PATH FRAME
+            |        yV
+            |
+            yV
+            """
+            # print(p_opt)
+            a_opt, b_opt, c_opt = p_opt
             #GET LINE
             x_model = np.linspace(min(x_coordinates), max(x_coordinates), 20)
-            y_model = self.model_f(x_model, a_opt, b_opt, c_opt,d_opt)
+            y_model = self.model_f(x_model, a_opt, b_opt, c_opt)
             #LINE FRAME->PATH_FRAME
             lingres  = [[x, y] for x, y in zip(x_model, y_model)]
-            x_path_frame_list, y_path_frame_list = self.rotate_points(lingres, math.degrees(math.atan(-self.slope)))
+            x_path_frame_list, y_path_frame_list = self.rotate_points(lingres, math.degrees(math.atan(-(self.slope))))
+            """        
+            ------>xCOSTMAP IMAGE
+            |         ->x PATH FRAME
+            |        yV
+            |
+            yV
+            """
             #PATH_FRAME -> VX_FRAME_IMAGE
             vx_frame_model = []
             path_frame = [[x, y] for x, y in zip(x_path_frame_list, y_path_frame_list)]
@@ -242,23 +318,26 @@ class CostMapProcess:
             for coords in path_frame:
                 shifted_x = coords[0] + self.new_origin[0]
                 shifted_y = coords[1] + self.new_origin[1]
-                vx_frame_model.append([shifted_y, shifted_x])
-            
-            # Shift coordinates to center of the image
-            shifted_coordinates = [(x - self.height//2, self.width//2 - y) for x, y in vx_frame_model]
+                vx_frame_model.append([round(shifted_x), round(shifted_y)])
+            """        
+            ------>xCOSTMAP IMAGE
+            |
+            |
+            |
+            yV
+            """
+            # print(vx_frame_model)
+            # vx_frame_model = [[x+ self.width//2, y] for x,y in path_frame]
 
-            # Convert shifted Cartesian coordinates to polar coordinates
-            polar_coordinates = [[np.sqrt(x**2 + y**2), np.arctan2(y, x)]for x, y in shifted_coordinates]
-            
-            #return original image (x,y) and polar cords when at center of image
-            return vx_frame_model, polar_coordinates
+            vx_frame_model = [[x+ self.width//2, y] for x,y in vx_frame_model]
+            return vx_frame_model
 
         except RuntimeError:
             print("No solution found")
             return [],[]
 
 
-    def vx_to_odom_frame_tf(self, polar_list):
+    def vx_to_odom_frame_tf(self, cart_list):
         """
         Transfer it to odom frame.
 
@@ -269,15 +348,69 @@ class CostMapProcess:
         Returns:
             cartesian_coordinates: List of fitted points in Odom frame
         """
+        cartesian_coordinates = [(x - self.height//2, self.width//2 - y) for x, y in cart_list]
+        """
+        ------>x COSTMAP IMAGE
+        |
+        |   ----->x'
+        |   |
+        |   |
+        |   Vy'
+       yV
+        """
+        cartesian_coordinates = [(-y,-x) for x, y in cartesian_coordinates]
+        """
+        ------>x COSTMAP IMAGE
+        |
+        |      ^x
+        |      |
+        |      |
+        |  y<--- VEHICLE FRAME
+        |   
+       yV
+        """
+        # Step 2: Convert shifted Cartesian coordinates to polar coordinates
+        polar_coordinates = [[np.sqrt(x**2 + y**2), (np.arctan2(y, x))] for x, y in cartesian_coordinates]
+        
         vx_theta = self.vx_yaw
-        # Discout vx_yaw
-        for points in polar_list:
-                points[1] = self.roll_over_radians( points[1] - vx_theta)
-
+        
+        # if vx_theta > 1.0:
+        #     vx_theta = 1.0
+        # # Discout vx_yaw
+        for points in polar_coordinates:
+            points[1] = (points[1] + np.float64(vx_theta))
+ 
         # Convert to Cartesian (x,y)
-        cartesian_coordinates = [[round(r * np.cos(theta)), round(r * np.sin(theta))] for r, theta in polar_list]
+        cartesian_coordinates = [[round(r * np.cos(theta)), round(r * np.sin(theta))] for r, theta in polar_coordinates]
+        """
+        ------>x COSTMAP IMAGE
+        |
+        |      ^x
+        |      |
+        |      |
+        |  y<--- VEHICLE FRAME
+        |   
+       yV
+        """
+        cartesian_coordinates = [(-y,-x) for x, y in cartesian_coordinates]
+        """
+        ------>x COSTMAP IMAGE
+        |
+        |   ----->x'
+        |   |
+        |   |
+        |   Vy'
+       yV
+        """
         # Shift back to Image frame
         cartesian_coordinates = [[int(x+self.width//2),int(self.height//2 - y)] for x, y in cartesian_coordinates]
+        """        
+        ------>xCOSTMAP IMAGE
+        |
+        |
+        |
+        yV
+        """
         # cartesian_coordinates = sorted(cartesian_coordinates, key=lambda coord: coord[1], reverse=True)
 
         return cartesian_coordinates
@@ -294,24 +427,11 @@ class CostMapProcess:
         """
         max_intensity = np.max(image)
 
+        ##THIS GIVES INVERTED [x,y]
         # Get the coordinates of pixels with the maximum intensity
         max_intensity_coordinates = np.column_stack(np.where(image == max_intensity))
-        #returns in [x,y]
+        max_intensity_coordinates = [[y,x] for x,y in max_intensity_coordinates]
         return max_intensity_coordinates
-    
-    def roll_over_radians(self, angle, range_start=-math.pi, range_end=math.pi):
-        """
-        Wrap angles over [-pi, pi]
-
-
-        Args:
-            angle: Angle in radians.
-
-        Returns:
-            rolled_angle: Angle in radians.
-        """
-        rolled_angle = (angle - range_start) % (range_end - range_start) + range_start
-        return rolled_angle
     
     def get_usable_edges(self, coordinates):
         """
@@ -324,12 +444,37 @@ class CostMapProcess:
         Returns:
             cartesian_coordinates: List of points that are on the outer edge from canny image.
             polar_coordinates: List of points [r, theta] from the center of the image. (Odom frame, vx as origin)
+        
+        ------>xCOSTMAP IMAGE
+        |
+        |
+        |
+       yV
         """
         polar_dict = {}
 
         # Step 1: Shift coordinates to center of the image
         shifted_coordinates = [(x - self.height//2, self.width//2 - y) for x, y in coordinates]
-
+        """
+        ------>x COSTMAP IMAGE
+        |
+        |   ----->x'
+        |   |
+        |   |
+        |   Vy'
+       yV
+        """
+        shifted_coordinates = [(-y,-x) for x, y in shifted_coordinates]
+        """
+        ------>x COSTMAP IMAGE
+        |
+        |      ^x
+        |      |
+        |      |
+        |  y<--- VEHICLE IMAGE FRAME
+        |   
+       yV
+        """
         # Step 2: Convert shifted Cartesian coordinates to polar coordinates
         polar_coordinates = [(np.sqrt(x**2 + y**2), round(np.arctan2(y, x),1)) for x, y in shifted_coordinates]
         
@@ -341,26 +486,52 @@ class CostMapProcess:
                     polar_dict[theta] = (r, theta)
             else:
                 polar_dict[theta] = (r, theta)
-
         polar_coordinates = list(polar_dict.values())
         # Step 4: Convert to Cartesian. (x, y)
         cartesian_coordinates = [[round(r * np.cos(theta)), round(r * np.sin(theta))] for r, theta in polar_coordinates]
+        """
+        ------>x COSTMAP IMAGE
+        |
+        |      ^x
+        |      |
+        |      |
+        |  y<--- VEHICLE IMAGE FRAME
+        |   
+       yV
+        """
+        cartesian_coordinates = [(-y,-x) for x, y in cartesian_coordinates]
+        """
+        ------>x COSTMAP IMAGE
+        |
+        |   ----->x'
+        |   |
+        |   |
+        |   Vy'
+       yV
+        """
+
         # Step 5: Shift back
         cartesian_coordinates = [[int(x+self.width//2),int(self.height//2 - y),] for x, y in cartesian_coordinates]
-        # Helps in plotting.
-        cartesian_coordinates = [[y,x] for x,y in cartesian_coordinates]
+        """ 
+        ------>xCOSTMAP IMAGE
+        |
+        |
+        |
+       yV
+        """
        # Step 6: sample //TO-DO; Time based sampling.
         # if len(cartesian_coordinates) > self.width//4:
         #     diff = len(cartesian_coordinates) - self.width//4
         #     for i in range(diff):
         #         cartesian_coordinates.pop(i)
         #
+        # POLAR_CORDINATES IS IN VEHICLE FRAME
         # [x,y] [r,theta]
         return cartesian_coordinates, polar_coordinates
     
     def plot_circles_vx_frame(self, coordinates_list, radius=1, color=255):
         """
-        Viz function with to show vehicle frame
+        Viz function with to show vehicle frame. What the vehicle sees is constant in this frame
 
         Args:
             coordinates_list: List of points in polar system in Odom frame.
@@ -372,19 +543,47 @@ class CostMapProcess:
         yawd_p = [list(t) for t in coordinates_list]
 
         vx_theta = self.vx_yaw
+
         for points in yawd_p:
-            points[1] = self.roll_over_radians(points[1] - np.float64(vx_theta))
+            points[1] = points[1] - np.float64(vx_theta)
+            
 
         # Convert to Cartesian.
         cartesian_coordinates = [[round(r * np.cos(theta)), round(r * np.sin(theta))] for r, theta in yawd_p]
+        """
+        ------>x COSTMAP IMAGE
+        |
+        |      ^x
+        |      |
+        |      |
+        |  y<--- VEHICLE FRAME
+        |   
+       yV
+        """
+        cartesian_coordinates = [(-y,-x) for x, y in cartesian_coordinates]
+        """
+        ------>x COSTMAP IMAGE
+        |
+        |   ----->x'
+        |   |
+        |   |
+        |   Vy'
+       yV
+        """
         # Shift back to Image frame
         cartesian_coordinates = [[int(x+self.width//2),int(self.height//2 - y)] for x, y in cartesian_coordinates]
-        # Plotting takes y,x
-        cartesian_coordinates = [[y,x] for x,y in cartesian_coordinates]
+        """ 
+        ------>xCOSTMAP IMAGE
+        |
+        |
+        |
+       yV
+        """
 
         # Create an empty image (numpy array)
         image = np.zeros((self.height, self.width), dtype=np.uint8)
-        # Iterate through the list of coordinates and draw circles
+        # Iterate through the
+        #  list of coordinates and draw circles
         for coordinates in cartesian_coordinates:
             center = tuple(coordinates)
             cv2.circle(image, center, radius, color, 1)
@@ -398,6 +597,11 @@ class CostMapProcess:
 
         return image, cartesian_coordinates
     
+    def compare_edge(self, frame, points_list):
+        for coordinates in points_list:
+            center = tuple(coordinates)
+            cv2.circle(frame, center, 1, 100, 1)
+        return frame
     def compare_two_lists(self, list1, list2):
         """
         Viz function to plot the original canny and extracted edge
@@ -412,7 +616,6 @@ class CostMapProcess:
         """
         image = np.zeros((self.height, self.width), dtype=np.uint8)
         # Iterate through the list of coordinates and draw circles
-        list1 = [(y,x) for x,y in list1]
         
         for coordinates in list1:
             center = tuple(coordinates)
@@ -434,17 +637,29 @@ class CostMapProcess:
         """
         path = Path()
         
-        path.header.frame_id = self.frame
+        path.header.frame_id = self.frame#"alpha_rise/base_link"
         path.header.stamp =  self.time
-        # print(shifted_coordinates)
         for cords in shifted_coordinates:
             pose_stamped = PoseStamped()
-            pose_stamped.header.frame_id = self.frame
+            pose_stamped.header.frame_id = self.frame#
             pose_stamped.header.stamp = self.time
 
             #IMAGE TO MAP FRAME FIXED TO ODOMs
-            x = -((cords[1] - self.height//2) * self.resolution) + self.vx_x
-            y = ((self.width//2 - cords[0])* self.resolution ) + self.vx_y
+            """
+            ------>x COSTMAP IMAGE
+            |
+            |      ^x
+            |      |
+            |      |
+            |  y<--- VEHICLE FRAME
+            |   
+            yV
+            """
+            x = -cords[1]
+            y = -cords[0]
+
+            x = ((self.height//2 + x) * self.resolution) + self.vx_x
+            y = ((self.width//2 + y)* self.resolution ) + self.vx_y
 
             pose_stamped.pose.position.x = x#self.height//4 - cords[1] * self.resolution
             pose_stamped.pose.position.y = y#self.height//4 - cords[0] * self.resolution 
@@ -453,8 +668,8 @@ class CostMapProcess:
             pose_stamped.pose.orientation.z = 0
             pose_stamped.pose.orientation.w = 1
             path.poses.append(pose_stamped)
-
-        self.pub.publish(path)
+        if abs(self.slope) >1.0:
+            self.pub.publish(path)
     
 if __name__ == "__main__":
     rospy.init_node('path_node')
