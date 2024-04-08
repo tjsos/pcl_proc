@@ -140,11 +140,11 @@ class CostMapProcess:
         viz_edges = self.compare_two_lists(raw_pixels, edge)
         compare_edge = self.compare_edge(vx_frame_image, path_cells)
 
-        mix= np.hstack((data, viz_edges, compare_path, compare_edge))
-        cv2.imshow("window", mix)
-        cv2.imshow("debug", debug_image)
-        cv2.imshow("path_frame", path_frame_debug)
-        cv2.waitKey(1)
+        # mix= np.hstack((data, viz_edges, compare_path, compare_edge))
+        # cv2.imshow("window", mix)
+        # cv2.imshow("debug", debug_image)
+        # cv2.imshow("path_frame", path_frame_debug)
+        # cv2.waitKey(1)
 
     
     def model_f(self,x, a, b, c):
@@ -222,7 +222,7 @@ class CostMapProcess:
 
             self.slope = -(self.slope)
             
-            print(f"Slope {self.slope}, Yaw {math.degrees(self.vx_yaw)}")
+            # print(f"Slope {self.slope}, Yaw {math.degrees(self.vx_yaw)}")
             
             lingres  = [[x, y] for x, y in zip(x_path_frame_list, y_path_frame_list)]
             #PATH_FRAME -> BEST_FIT_LINE_FRAME
@@ -234,7 +234,7 @@ class CostMapProcess:
             |
         yV
             """
-            distance_in_meters = 20
+            distance_in_meters = 15
             self.distance_in_cells = distance_in_meters*1/self.resolution
             
             if self.slope <=0.0:
@@ -639,10 +639,11 @@ class CostMapProcess:
         
         path.header.frame_id = self.frame#"alpha_rise/base_link"
         path.header.stamp =  self.time
-        for cords in shifted_coordinates:
+        for index, cords in enumerate(shifted_coordinates):
             pose_stamped = PoseStamped()
             pose_stamped.header.frame_id = self.frame#
             pose_stamped.header.stamp = self.time
+            pose_stamped.header.seq = index
 
             #IMAGE TO MAP FRAME FIXED TO ODOMs
             """
@@ -668,7 +669,7 @@ class CostMapProcess:
             pose_stamped.pose.orientation.z = 0
             pose_stamped.pose.orientation.w = 1
             path.poses.append(pose_stamped)
-        if abs(self.slope) >1.0:
+        if abs(self.slope) > 0.7:
             self.pub.publish(path)
     
 if __name__ == "__main__":
