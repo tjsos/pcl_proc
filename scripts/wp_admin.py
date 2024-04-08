@@ -57,7 +57,6 @@ class Wp_Admin:
                 wp.polygon.points.append(Point32(x_b ,y_b, 0))
 
                 self.pub_update.publish(wp)
-                print("switched to survey_3d")
 
         elif self.state == "start":
             service_client_change_state = rospy.ServiceProxy("/alpha_rise/helm/change_state", ChangeState)
@@ -65,22 +64,49 @@ class Wp_Admin:
             response = service_client_change_state(request)
             print(f"changed to {response.state.name}")
 
-            x_b = self.vx_x + 15
-            y_b = self.vx_y
+            x_b, y_b = self.extend_line_from_point([self.vx_x, self.vx_y], self.vx_yaw, length=15)
+            # if self.corner == 0:
+            #     x_b = self.vx_x + 30
+            #     y_b = self.vx_y
 
-            x_c = x_b 
-            y_c = y_b - 15
+            #     self.corner += 1
+            
+            # elif self.corner == 1:
+            #     x_b = self.vx_x
+            #     y_b = self.vx_y - 30
 
+            #     self.corner += 1
+
+            # elif self.corner == 2:
+            #     x_b = self.vx_x - 30
+            #     y_b = self.vx_y
+            #     self.corner += 1
+
+            # elif self.corner == 3:
+            #     x_b = self.vx_x
+            #     y_b = self.vx_y + 30
+            #     self.corner += 1 
+            
             wp = PolygonStamped()
             wp.header.stamp = msg.header.stamp
             wp.header.frame_id = msg.header.frame_id
             wp.polygon.points.append(Point32(x_b ,y_b, 0))
-            wp.polygon.points.append(Point32(x_c ,y_c, 0))
+            # wp.polygon.points.append(Point32(x_c ,y_c, 0))
 
             self.pub_update.publish(wp)
             print(wp)
-            time.sleep(20)
+            time.sleep(15)
+    
+    def extend_line_from_point(self, point, orientation, length):
+        # Convert orientation from degrees to radians
+        angle_radians = math.radians(orientation)
 
+        # Calculate the coordinates of the second point
+        x2 = point[0] + length * math.cos(angle_radians)
+        y2 = point[1] + length * math.sin(angle_radians)
+
+        return (x2, y2)
+    
     def find_point_to_follow(self, path_msg):
         farthest_coordinate = None
         max_distance = float('-inf')
@@ -92,7 +118,8 @@ class Wp_Admin:
 
             distance,direction = self.get_vector([self.vx_x, self.vx_y], [x,y])
             if distance > max_distance:
-                if -90 < direction < 90:
+                if abs(self.vx_yaw - direction) < 90:
+                    print(self.vx_yaw - direction)
                     max_distance = distance
 
                     farthest_coordinate = pose_stamped.pose.position
