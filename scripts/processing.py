@@ -19,7 +19,7 @@ class Processing:
             number_of_bins = rospy.get_param("/stonefish/number_of_bins", 100)
             
         else:
-            sub_topic = rospy.get_param("pcl_filter/sf_sub_topic", '/alpha_rise/msis/pointcloud')
+            sub_topic = rospy.get_param("pcl_filter/sub_topic", '/alpha_rise/msis/pointcloud')
             self.std_dev_multiplier = rospy.get_param("pcl_filter/std_dev_multiplier", 2.55)
             #This param is in meters.
             self.radial_filter = rospy.get_param("pcl_filter/radial_filter_param", 120)
