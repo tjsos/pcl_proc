@@ -7,6 +7,7 @@
 
 import rospy
 from nav_msgs.msg import Path, Odometry
+from std_msgs.msg import Int16
 from geometry_msgs.msg import PolygonStamped, Point32
 import tf.transformations as tf_transform
 import math
@@ -15,13 +16,18 @@ import time
 
 class Wp_Admin:
     def __init__(self):
+        self.distance_in_meters = rospy.get_param("path_generator/standoff_distance_meters",15)
         rospy.Subscriber("/path", Path, callback=self.path_cB)
         rospy.Subscriber("/alpha_rise/odometry/filtered/local", Odometry, callback=self.odom_cB)
+        rospy.Subscriber("/path/slope", Int16, callback=self.slope_cB)
         self.pub_update = rospy.Publisher("/alpha_rise/helm/path_3d/update_waypoints", PolygonStamped, queue_size=1)
         self.pub_append = rospy.Publisher("/alpha_rise/helm/path_3d/append_waypoints", PolygonStamped, queue_size=1)
-        self.vx_x, self.vx_y, self.vx_yaw = 0,0,0
+        self.vx_x, self.vx_y, self.vx_yaw, self.slope_acceptance = 0,0,0,0
         self.start_time = time.time()
         self.state = "survey_3d"
+    
+    def slope_cB(self, msg):
+        self.slope_acceptance  = msg.data
 
     def odom_cB(self, msg):
         self.vx_x = msg.pose.pose.position.x
@@ -35,14 +41,7 @@ class Wp_Admin:
         self.vx_yaw = math.degrees(tf_transform.euler_from_quaternion([x,y,z,w])[2])
 
     def path_cB(self, msg):
-        elapsed_time = time.time() - self.start_time
-        if elapsed_time > 2:
-            self.start_time = time.time()
-            service_client_get_state = rospy.ServiceProxy("/alpha_rise/helm/get_state", GetState)
-            request = GetStateRequest("")
-            response = service_client_get_state(request)
-            self.state = response.state.name
-
+        self.check_state()
         if self.state == "survey_3d":
             point = self.find_point_to_follow(msg)  
             if point != None:
@@ -63,40 +62,40 @@ class Wp_Admin:
             request = ChangeStateRequest("survey_3d")
             response = service_client_change_state(request)
             print(f"changed to {response.state.name}")
+            if self.slope_acceptance == 1:
+                x_b, y_b = self.extend_line_from_point([self.vx_x, self.vx_y], self.vx_yaw, length=self.distance_in_meters)
+                wp = PolygonStamped()
+                wp.header.stamp = msg.header.stamp
+                wp.header.frame_id = msg.header.frame_id
+                wp.polygon.points.append(Point32(x_b ,y_b, 0))
+                # wp.polygon.points.append(Point32(x_c ,y_c, 0))
 
-            x_b, y_b = self.extend_line_from_point([self.vx_x, self.vx_y], self.vx_yaw, length=15)
-            # if self.corner == 0:
-            #     x_b = self.vx_x + 30
-            #     y_b = self.vx_y
+                self.pub_update.publish(wp)
+                print(wp)
+                time.sleep(self.distance_in_meters)
 
-            #     self.corner += 1
-            
-            # elif self.corner == 1:
-            #     x_b = self.vx_x
-            #     y_b = self.vx_y - 30
+            elif self.slope_acceptance == 0:
+                x_b, y_b = self.extend_line_from_point([self.vx_x, self.vx_y], self.vx_yaw, length=self.distance_in_meters-5)
+                x_c, y_c = self.extend_line_from_point([x_b, y_b], self.vx_yaw-90, length=self.distance_in_meters-5)
+                wp = PolygonStamped()
+                wp.header.stamp = msg.header.stamp
+                wp.header.frame_id = msg.header.frame_id
+                wp.polygon.points.append(Point32(x_b ,y_b, 0))
+                wp.polygon.points.append(Point32(x_c ,y_c, 0))
 
-            #     self.corner += 1
+                self.pub_update.publish(wp)
+                print(wp)
+                time.sleep(self.distance_in_meters)
 
-            # elif self.corner == 2:
-            #     x_b = self.vx_x - 30
-            #     y_b = self.vx_y
-            #     self.corner += 1
+    def check_state(self):
+        elapsed_time = time.time() - self.start_time
+        if elapsed_time > 2:
+            self.start_time = time.time()
+            service_client_get_state = rospy.ServiceProxy("/alpha_rise/helm/get_state", GetState)
+            request = GetStateRequest("")
+            response = service_client_get_state(request)
+            self.state = response.state.name
 
-            # elif self.corner == 3:
-            #     x_b = self.vx_x
-            #     y_b = self.vx_y + 30
-            #     self.corner += 1 
-            
-            wp = PolygonStamped()
-            wp.header.stamp = msg.header.stamp
-            wp.header.frame_id = msg.header.frame_id
-            wp.polygon.points.append(Point32(x_b ,y_b, 0))
-            # wp.polygon.points.append(Point32(x_c ,y_c, 0))
-
-            self.pub_update.publish(wp)
-            print(wp)
-            time.sleep(15)
-    
     def extend_line_from_point(self, point, orientation, length):
         # Convert orientation from degrees to radians
         angle_radians = math.radians(orientation)
@@ -118,7 +117,7 @@ class Wp_Admin:
 
             distance,direction = self.get_vector([self.vx_x, self.vx_y], [x,y])
             if distance > max_distance:
-                if abs(self.vx_yaw - direction) < 90:
+                if abs(self.vx_yaw - direction) < 60:
                     print(self.vx_yaw - direction)
                     max_distance = distance
 
