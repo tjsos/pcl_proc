@@ -14,3 +14,9 @@ path_generator:
   points_to_sample_from_curve: 20
   # Constrains the slope(0-1)
   slope_tolerance: 1
+
+waypoint_admin:
+  update_waypoint_topic: "/alpha_rise/helm/path_3d/update_waypoints"
+  append_waypoint_topic: "/alpha_rise/helm/path_3d/append_waypoints"
+  get_state_service: "/alpha_rise/helm/get_state"
+  change_state_service: "/alpha_rise/helm/change_state"

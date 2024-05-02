@@ -2,7 +2,7 @@
 
 #Author: Tony Jacob
 #Part of RISE Project. 
-#Generates curve, standoff curve of the iceberg from a costmap
+#Assigns waypoints from the path to be fed to the vx nav system.
 #tony.jacob@uri.edu
 
 import rospy
@@ -16,12 +16,24 @@ import time
 
 class Wp_Admin:
     def __init__(self):
+        #Get Params
         self.distance_in_meters = rospy.get_param("path_generator/standoff_distance_meters",15)
-        rospy.Subscriber("/path", Path, callback=self.path_cB)
+        path_topic = rospy.get_param("path_generator/path_topic", "/path")
+        update_waypoint_topic = rospy.get_param("waypoint_admin/update_waypoint_topic", "/alpha_rise/helm/path_3d/update_waypoints")
+        append_waypoint_topic = rospy.get_param("waypoint_admin/append_waypoint_topic", "/alpha_rise/helm/path_3d/append_waypoints")
+        self.get_state_service = rospy.get_param("waypoint_admin/get_state_service", "/alpha_rise/helm/get_state")
+        self.change_state_service = rospy.get_param("waypoint_admin/change_state_service", "/alpha_rise/helm/change_state")
+
+        #Declare Pubs
+        self.pub_update = rospy.Publisher(update_waypoint_topic, PolygonStamped, queue_size=1)
+        self.pub_append = rospy.Publisher(append_waypoint_topic, PolygonStamped, queue_size=1)
+        
+        #Declare Subs
+        rospy.Subscriber(path_topic, Path, callback=self.path_cB)
+        rospy.Subscriber(path_topic+"/slope", Int16, callback=self.slope_cB)
         rospy.Subscriber("/alpha_rise/odometry/filtered/local", Odometry, callback=self.odom_cB)
-        rospy.Subscriber("/path/slope", Int16, callback=self.slope_cB)
-        self.pub_update = rospy.Publisher("/alpha_rise/helm/path_3d/update_waypoints", PolygonStamped, queue_size=1)
-        self.pub_append = rospy.Publisher("/alpha_rise/helm/path_3d/append_waypoints", PolygonStamped, queue_size=1)
+
+        #Declare variables
         self.vx_x, self.vx_y, self.vx_yaw, self.slope_acceptance = 0,0,0,0
         self.start_time = time.time()
         self.state = "survey_3d"
@@ -58,7 +70,7 @@ class Wp_Admin:
                 self.pub_update.publish(wp)
 
         elif self.state == "start":
-            service_client_change_state = rospy.ServiceProxy("/alpha_rise/helm/change_state", ChangeState)
+            service_client_change_state = rospy.ServiceProxy(self.change_state_service, ChangeState)
             request = ChangeStateRequest("survey_3d")
             response = service_client_change_state(request)
             print(f"changed to {response.state.name}")
@@ -75,8 +87,8 @@ class Wp_Admin:
                 time.sleep(self.distance_in_meters)
 
             elif self.slope_acceptance == 0:
-                x_b, y_b = self.extend_line_from_point([self.vx_x, self.vx_y], self.vx_yaw, length=self.distance_in_meters-5)
-                x_c, y_c = self.extend_line_from_point([x_b, y_b], self.vx_yaw-90, length=self.distance_in_meters-5)
+                x_b, y_b = self.extend_line_from_point([self.vx_x, self.vx_y], self.vx_yaw, length=self.distance_in_meters)
+                x_c, y_c = self.extend_line_from_point([x_b, y_b], self.vx_yaw-90, length=self.distance_in_meters-10)
                 wp = PolygonStamped()
                 wp.header.stamp = msg.header.stamp
                 wp.header.frame_id = msg.header.frame_id
@@ -91,7 +103,7 @@ class Wp_Admin:
         elapsed_time = time.time() - self.start_time
         if elapsed_time > 2:
             self.start_time = time.time()
-            service_client_get_state = rospy.ServiceProxy("/alpha_rise/helm/get_state", GetState)
+            service_client_get_state = rospy.ServiceProxy(self.get_state_service, GetState)
             request = GetStateRequest("")
             response = service_client_get_state(request)
             self.state = response.state.name

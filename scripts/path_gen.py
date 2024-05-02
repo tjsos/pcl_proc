@@ -45,7 +45,7 @@ class PathGen:
         
         #Path Publisher
         self.pub = rospy.Publisher(path_topic, Path, queue_size=1)
-        self.pub_slope = rospy.Publisher("/path/slope", Int16, queue_size=1)
+        self.pub_slope = rospy.Publisher(path_topic+"/slope", Int16, queue_size=1)
         
         #Vx_frame image publisher
         self.image_pub = rospy.Publisher(vx_image_topic, Image, queue_size=1)
