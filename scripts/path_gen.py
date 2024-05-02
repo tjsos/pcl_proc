@@ -20,7 +20,7 @@ import cv2
 import math
 import scipy
 
-class CostMapProcess:
+class PathGen:
     def __init__(self) -> None:
         #Get params
         self.odom_frame = rospy.get_param("path_generator/odom_frame","alpha_rise/odom")
@@ -157,7 +157,6 @@ class CostMapProcess:
         path_cells = self.curve_fit(x_list, y_list)
         # Project line in odom frame
         odom_frame_path = self.vx_to_odom_frame_tf(path_cells)
-
         """
         Path
         """
@@ -733,5 +732,5 @@ class CostMapProcess:
     
 if __name__ == "__main__":
     rospy.init_node('path_node')
-    l = CostMapProcess()
+    l = PathGen()
     rospy.spin()
