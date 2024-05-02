@@ -1,9 +1,9 @@
 pcl_filter:
   stonefish: true
   sf_sub_topic: '/alpha_rise/msis/stonefish/data/pointcloud'
-  sf_radial_filter_param: 5
+  sf_radial_filter_param: 2 #meters
   sf_std_dev_multiplier: 1
 
   sub_topic: '/alpha_rise/msis/pointcloud'
-  radial_filter_param: 120
+  radial_filter_param: 2 #2meters.
   std_dev_multiplier: 2.25

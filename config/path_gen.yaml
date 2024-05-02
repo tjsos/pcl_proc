@@ -1,0 +1,22 @@
+path_generator:
+  odom_frame: "alpha_rise/odom"
+  base_frame: "alpha_rise/base_link"
+  costmap_topic: "/move_base/local_costmap/costmap"
+  path_topic: "/path"
+  vehicle_frame_image_topic: "/vx_image"
+  debug: False
+
+  canny_min_threshold: 200
+  canny_max_threshold: 255
+
+  #To change polynomial, find model_f function in path.py
+  standoff_distance_meters: 20
+  points_to_sample_from_curve: 20
+  # Constrains the slope(0-1)
+  slope_tolerance: 1
+
+waypoint_admin:
+  update_waypoint_topic: "/alpha_rise/helm/path_3d/update_waypoints"
+  append_waypoint_topic: "/alpha_rise/helm/path_3d/append_waypoints"
+  get_state_service: "/alpha_rise/helm/get_state"
+  change_state_service: "/alpha_rise/helm/change_state"
