@@ -7,7 +7,7 @@
 
 import rospy
 from nav_msgs.msg import Path, Odometry
-from std_msgs.msg import Int16
+from std_msgs.msg import Float32
 from geometry_msgs.msg import PolygonStamped, Point32
 import tf.transformations as tf_transform
 import math
@@ -23,23 +23,23 @@ class Wp_Admin:
         append_waypoint_topic = rospy.get_param("waypoint_admin/append_waypoint_topic", "/alpha_rise/helm/path_3d/append_waypoints")
         self.get_state_service = rospy.get_param("waypoint_admin/get_state_service", "/alpha_rise/helm/get_state")
         self.change_state_service = rospy.get_param("waypoint_admin/change_state_service", "/alpha_rise/helm/change_state")
-
+        self.slope_tolerance = rospy.get_param("path_generator/slope_tolerance", 1)
         #Declare Pubs
         self.pub_update = rospy.Publisher(update_waypoint_topic, PolygonStamped, queue_size=1)
         self.pub_append = rospy.Publisher(append_waypoint_topic, PolygonStamped, queue_size=1)
         
         #Declare Subs
         rospy.Subscriber(path_topic, Path, callback=self.path_cB)
-        rospy.Subscriber(path_topic+"/slope", Int16, callback=self.slope_cB)
+        rospy.Subscriber(path_topic+"/slope", Float32, callback=self.slope_cB)
         rospy.Subscriber("/alpha_rise/odometry/filtered/local", Odometry, callback=self.odom_cB)
 
         #Declare variables
-        self.vx_x, self.vx_y, self.vx_yaw, self.slope_acceptance = 0,0,0,0
+        self.vx_x, self.vx_y, self.vx_yaw, self.current_slope = 0,0,0,0
         self.start_time = time.time()
         self.state = "survey_3d"
     
     def slope_cB(self, msg):
-        self.slope_acceptance  = msg.data
+        self.current_slope = msg.data
 
     def odom_cB(self, msg):
         self.vx_x = msg.pose.pose.position.x
@@ -54,50 +54,43 @@ class Wp_Admin:
 
     def path_cB(self, msg):
         self.check_state()
+        #Create Waypoint Message
+        wp = PolygonStamped()
+        wp.header.stamp = msg.header.stamp
+        wp.header.frame_id = msg.header.frame_id
         if self.state == "survey_3d":
-            point = self.find_point_to_follow(msg)  
-            if point != None:
-
-                x_b = point.x
-                y_b = point.y
-
-                # print(x_b, y_b)
-                wp = PolygonStamped()
-                wp.header.stamp = msg.header.stamp
-                wp.header.frame_id = msg.header.frame_id
-                wp.polygon.points.append(Point32(x_b ,y_b, 0))
+            global_point = self.find_point_to_follow(msg)  
+            print(global_point)
+            if global_point != None:
+                x_c = global_point.x
+                y_c = global_point.y
+                
+                wp.polygon.points.append(Point32(x_c ,y_c, 0))
 
                 self.pub_update.publish(wp)
 
         elif self.state == "start":
+            #Switch state to survey_3d
             service_client_change_state = rospy.ServiceProxy(self.change_state_service, ChangeState)
             request = ChangeStateRequest("survey_3d")
             response = service_client_change_state(request)
             print(f"changed to {response.state.name}")
-            if self.slope_acceptance == 1:
+            
+            #Extend the track behaviour
+            if self.current_slope >= self.slope_tolerance:
+                print("behaviour_1", time.time())
                 x_b, y_b = self.extend_line_from_point([self.vx_x, self.vx_y], self.vx_yaw, length=self.distance_in_meters)
-                wp = PolygonStamped()
-                wp.header.stamp = msg.header.stamp
-                wp.header.frame_id = msg.header.frame_id
                 wp.polygon.points.append(Point32(x_b ,y_b, 0))
-                # wp.polygon.points.append(Point32(x_c ,y_c, 0))
 
-                self.pub_update.publish(wp)
-                print(wp)
-                time.sleep(self.distance_in_meters)
-
-            elif self.slope_acceptance == 0:
+            #Extend and turn behaviour 
+            elif self.current_slope < self.slope_tolerance:
+                print("behaviour_2",time.time())
                 x_b, y_b = self.extend_line_from_point([self.vx_x, self.vx_y], self.vx_yaw, length=self.distance_in_meters)
-                x_c, y_c = self.extend_line_from_point([x_b, y_b], self.vx_yaw-90, length=self.distance_in_meters-10)
-                wp = PolygonStamped()
-                wp.header.stamp = msg.header.stamp
-                wp.header.frame_id = msg.header.frame_id
+                x_c, y_c = self.extend_line_from_point([x_b, y_b], self.vx_yaw-45, length=self.distance_in_meters)
                 wp.polygon.points.append(Point32(x_b ,y_b, 0))
                 wp.polygon.points.append(Point32(x_c ,y_c, 0))
 
-                self.pub_update.publish(wp)
-                print(wp)
-                time.sleep(self.distance_in_meters)
+            self.pub_update.publish(wp)
 
     def check_state(self):
         elapsed_time = time.time() - self.start_time
@@ -130,7 +123,6 @@ class Wp_Admin:
             distance,direction = self.get_vector([self.vx_x, self.vx_y], [x,y])
             if distance > max_distance:
                 if abs(self.vx_yaw - direction) < 60:
-                    print(self.vx_yaw - direction)
                     max_distance = distance
 
                     farthest_coordinate = pose_stamped.pose.position
