@@ -13,7 +13,7 @@ import tf.transformations as tf_transform
 from nav_msgs.msg import OccupancyGrid, Path
 from geometry_msgs.msg import PoseStamped
 from sensor_msgs.msg import Image
-from std_msgs.msg import Int16
+from std_msgs.msg import Float32
 from cv_bridge import CvBridge
 import numpy as np
 import cv2
@@ -45,7 +45,7 @@ class PathGen:
         
         #Path Publisher
         self.pub = rospy.Publisher(path_topic, Path, queue_size=1)
-        self.pub_slope = rospy.Publisher(path_topic+"/slope", Int16, queue_size=1)
+        self.pub_slope = rospy.Publisher(path_topic+"/slope", Float32, queue_size=1)
         
         #Vx_frame image publisher
         self.image_pub = rospy.Publisher(vx_image_topic, Image, queue_size=1)
@@ -679,7 +679,7 @@ class PathGen:
         else:
             path = Path()
             self.path = Path()
-            slope_msg = Int16()
+            slope_msg = Float32()
             path.header.frame_id = self.frame#"alpha_rise/base_link"
             path.header.stamp =  self.time
             for index, cords in enumerate(shifted_coordinates):
@@ -715,14 +715,14 @@ class PathGen:
             #Send previous valid path if present path is invalid.
             if abs(self.slope) > self.slope_tolerance:
                 print("acceptable slope")
-                slope_msg.data = 1
+                slope_msg.data = self.slope
                 self.path = path
                 self.poses = path.poses
                 self.pub.publish(self.path)
                 self.pub_slope.publish(slope_msg)
             else:
                 print("unacceptable")
-                slope_msg.data = 0
+                slope_msg.data = self.slope
                 self.path.header = path.header
                 self.path.header.stamp = rospy.Time()
                 self.path.poses = self.poses
