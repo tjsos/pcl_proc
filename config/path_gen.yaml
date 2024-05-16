@@ -4,7 +4,7 @@ path_generator:
   costmap_topic: "/move_base/local_costmap/costmap"
   path_topic: "/path"
   vehicle_frame_image_topic: "/vx_image"
-  debug: False
+  debug: True
 
   canny_min_threshold: 200
   canny_max_threshold: 255
@@ -12,8 +12,6 @@ path_generator:
   #To change polynomial, find model_f function in path.py
   standoff_distance_meters: 20
   points_to_sample_from_curve: 20
-  # Constrains the slope(0-1)
-  slope_tolerance: 1
 
 waypoint_admin:
   update_waypoint_topic: "/alpha_rise/helm/path_3d/update_waypoints"
