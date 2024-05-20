@@ -23,7 +23,7 @@ class Wp_Admin:
         append_waypoint_topic = rospy.get_param("waypoint_admin/append_waypoint_topic", "/alpha_rise/helm/path_3d/append_waypoints")
         self.get_state_service = rospy.get_param("waypoint_admin/get_state_service", "/alpha_rise/helm/get_state")
         self.change_state_service = rospy.get_param("waypoint_admin/change_state_service", "/alpha_rise/helm/change_state")
-        self.slope_tolerance = rospy.get_param("path_generator/slope_tolerance", 1)
+     
         #Declare Pubs
         self.pub_update = rospy.Publisher(update_waypoint_topic, PolygonStamped, queue_size=1)
         self.pub_append = rospy.Publisher(append_waypoint_topic, PolygonStamped, queue_size=1)
@@ -76,19 +76,11 @@ class Wp_Admin:
             response = service_client_change_state(request)
             print(f"changed to {response.state.name}")
             
-            #Extend the track behaviour
-            if self.current_slope >= self.slope_tolerance:
-                print("behaviour_1", time.time())
-                x_b, y_b = self.extend_line_from_point([self.vx_x, self.vx_y], self.vx_yaw, length=self.distance_in_meters)
-                wp.polygon.points.append(Point32(x_b ,y_b, 0))
-
-            #Extend and turn behaviour 
-            elif self.current_slope < self.slope_tolerance:
-                print("behaviour_2",time.time())
-                x_b, y_b = self.extend_line_from_point([self.vx_x, self.vx_y], self.vx_yaw, length=self.distance_in_meters)
-                x_c, y_c = self.extend_line_from_point([x_b, y_b], self.vx_yaw-45, length=self.distance_in_meters)
-                wp.polygon.points.append(Point32(x_b ,y_b, 0))
-                wp.polygon.points.append(Point32(x_c ,y_c, 0))
+            print("behaviour_2",time.time())
+            x_b, y_b = self.extend_line_from_point([self.vx_x, self.vx_y], self.vx_yaw, length=self.distance_in_meters)
+            x_c, y_c = self.extend_line_from_point([x_b, y_b], self.vx_yaw-45, length=self.distance_in_meters)
+            wp.polygon.points.append(Point32(x_b ,y_b, 0))
+            wp.polygon.points.append(Point32(x_c ,y_c, 0))
 
             self.pub_update.publish(wp)
 
