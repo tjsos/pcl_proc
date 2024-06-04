@@ -40,7 +40,7 @@ obstacles:
   pointcloud: {
     sensor_frame: alpha_rise/ping360_link_sf,
     data_type: PointCloud2,
-    topic: /alpha_rise/msis/pointcloud/filtered,
+    topic: /alpha_rise/msis/stonefish/data/pointcloud/filtered,
     #How long to keep each sensor reading in seconds. A value of 0.0 will only keep the most recent reading.
     observation_persistance: 0,
     #Whether or not this observation should be used to mark obstacles.
