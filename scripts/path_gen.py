@@ -5,16 +5,12 @@
 #Generates curve, standoff curve of the iceberg from a costmap
 #tony.jacob@uri.edu
 
-#rosbag record /vx_image /alpha_rise/odometry/filtered/local
-
 import rospy
 import tf2_ros
 import tf.transformations as tf_transform
 from nav_msgs.msg import OccupancyGrid, Path
-from geometry_msgs.msg import PoseStamped
-from sensor_msgs.msg import Image
+from geometry_msgs.msg import PoseStamped, TransformStamped
 from std_msgs.msg import Float32
-from cv_bridge import CvBridge
 import numpy as np
 import cv2
 import math
@@ -30,9 +26,9 @@ class PathGen:
         #Debug
         self.debug = rospy.get_param("path_generator/debug",False)
 
-        costmap_topic = rospy.get_param("path_generator/costmap_topic","/move_base/local_costmap/costmap")
-        path_topic = rospy.get_param("path_generator/path_topic","/path")
-        vx_image_topic = rospy.get_param("path_generator/vehicle_frame_image_topic","/vx_image")
+        costmap_topic = rospy.get_param("path_generator/costmap_topic")
+        path_topic = rospy.get_param("path_generator/path_topic")
+        obstacle_distance_topic = rospy.get_param("path_generator/distance_to_obstacle_topic")
 
         self.canny_min = rospy.get_param("path_generator/canny_min_threshold",200)
         self.canny_max = rospy.get_param("path_generator/canny_max_threshold",255)
@@ -45,12 +41,9 @@ class PathGen:
         
         #Path Publisher
         self.pub_path = rospy.Publisher(path_topic, Path, queue_size=1)
-        self.pub_slope = rospy.Publisher(path_topic+"/slope", Float32, queue_size=1)
-        self.pub_slope_angle = rospy.Publisher(path_topic+"/slope/angle", Float32, queue_size=1)
-        
+
         #Vx_frame image publisher
-        self.image_pub = rospy.Publisher(vx_image_topic, Image, queue_size=1)
-        self.bridge = CvBridge()
+        self.obstacle_distance_pub = rospy.Publisher(obstacle_distance_topic, Float32, queue_size=1)
         
         #TF Buffer and Listener
         self.buffer = tf2_ros.Buffer()
@@ -62,7 +55,7 @@ class PathGen:
         #path placeholder
         self.poses = []
         
-    def mapCB(self, message):
+    def mapCB(self, message:OccupancyGrid):
         """
         Transform Stuff
         """
@@ -153,7 +146,7 @@ class PathGen:
         #Image and points in Vx_frame
         vx_frame_image, vx_frame_points = self.transform_to_vx_frame(edge_polar)
         #Insert Standoff
-        x_list, y_list, debug_image, edge_frame_debug = self.edge_shifting(vx_frame_image)
+        x_list, y_list, edge_frame_debug = self.edge_shifting(vx_frame_image)
         # Fit the line
         path_cells = self.curve_fit(x_list, y_list)
         # Project line in odom frame
@@ -162,8 +155,12 @@ class PathGen:
         Path
         """
         self.convert_and_publish_path(path_odom_frame)
-        vx_frame_image_msg = self.bridge.cv2_to_imgmsg(vx_frame_image)
-        self.image_pub.publish(vx_frame_image_msg)
+
+        """
+        Distance to Obstacle
+        """
+        distance_to_obstacle = self.get_distance_to_obstacle(vx_frame_image)
+        self.obstacle_distance_pub.publish(distance_to_obstacle)
 
         """
         Visualization
@@ -174,9 +171,8 @@ class PathGen:
             viz_edges = path_utils.compare_two_lists(raw_pixels, edge, self.height, self.width)
             compare_edge = path_utils.compare_points_with_image(vx_frame_image, path_cells)
 
-            mix= np.hstack((data, viz_edges, compare_edge, compare_path))
+            mix= np.hstack((data, viz_edges,compare_edge, compare_path))
             cv2.imshow("window", mix)
-            cv2.imshow("debug", debug_image)
             cv2.imshow("edge_frame", edge_frame_debug)
             cv2.waitKey(1)
     
@@ -358,14 +354,6 @@ class PathGen:
         self.new_origin = []
         vx_frame_pixels = path_utils.find_cordinates_of_max_value(vx_frame_cropped)
 
-        if self.debug:
-            debug = np.zeros((self.height, self.width,3), dtype=np.uint8)
-            edge_frame_debug = np.zeros((self.height, self.width,3), dtype=np.uint8)
-        
-            for coordinates in vx_frame_pixels:
-                center = tuple(coordinates)
-                cv2.circle(debug, center, 1, (255,255,255), 1)
-        
         #Atleast need 2 points
         if len(vx_frame_pixels) > 2:
             #New origin from list of points.
@@ -381,9 +369,6 @@ class PathGen:
             #New origin
             self.new_origin.append(min_x)
             self.new_origin.append(min_y)
-            
-            if self.debug:
-                cv2.circle(debug, (min_x, min_y), 1, (0,255,0), 1)
             
             ##VX_FRAME_IMAGE -> EDGE FRAME
             x_edge_frame_list = []
@@ -408,17 +393,14 @@ class PathGen:
             ##LINEAR REGESH
             # self.slope, intercept, r_value, p_value, std_err = scipy.stats.linregress(x_edge_frame_list, 
                                                                                     #   y_edge_frame_list)
-            p_opt, p_cov = scipy.optimize.curve_fit(path_utils.linear_regression_model, x_edge_frame_list, y_edge_frame_list)
-            self.slope,intercept = p_opt
+            self.slope, intercept = path_utils.calculate_slope(x_edge_frame_list, y_edge_frame_list)
 
             #Slope Angle (in radian)
             self.angle_from_e_to_l = math.atan(self.slope)
-            # if self.angle_from_e_to_l <= 0:
-            #     self.angle_from_e_to_l += math.pi
-            print(math.degrees(self.angle_from_e_to_l))
-            slope = path_utils.calculate_slope(x_edge_frame_list, y_edge_frame_list)
             
             if self.debug:
+                edge_frame_debug = np.zeros((self.height, self.width,3), dtype=np.uint8)
+
                 lin_regress_debug = [round((self.slope) * x  + intercept) for x in x_edge_frame_list]
     
                 for cords in zip(x_edge_frame_list,y_edge_frame_list ):
@@ -435,6 +417,10 @@ class PathGen:
                     cords[1] = cords[1]+self.height//2
                     center = tuple(cords)
                     cv2.circle(edge_frame_debug, center, 1, (0,0,255), 1)
+
+                #Draw origin of Edge Frame
+                cv2.circle(edge_frame_debug, (self.width//2, 
+                                              self.height//2), 1, (0,255,0), 2)
                 
             lingres  = [[x, y] for x, y in zip(x_edge_frame_list, y_edge_frame_list)]
 
@@ -454,7 +440,7 @@ class PathGen:
             #Insert standoff distance
             distance_in_cells = self.distance_in_meters*1/self.resolution
             
-            if round(vx_y_line_frame[0],2) > 0.0:
+            if round(vx_y_line_frame[0]) > 0.0:
                 y_line_frame_list = [y + distance_in_cells for y in y_line_frame_list]
             else:
                 y_line_frame_list = [y - distance_in_cells for y in y_line_frame_list]
@@ -463,9 +449,9 @@ class PathGen:
             x_line_frame_list = y_line_frame_list = 0
         
         if self.debug:
-            return x_line_frame_list, y_line_frame_list, debug, edge_frame_debug
+            return x_line_frame_list, y_line_frame_list, edge_frame_debug
         else:
-            return x_line_frame_list, y_line_frame_list, None, None
+            return x_line_frame_list, y_line_frame_list, None
        
     def curve_fit(self, x_coordinates:list, y_coordinates:list):
         """
@@ -528,7 +514,6 @@ class PathGen:
         except TypeError:
             print("No solution found")
             return -1
-
 
     def vx_to_odom_frame_tf(self, cart_list:list):
         """
@@ -611,7 +596,7 @@ class PathGen:
 
             return cartesian_coordinates
     
-    def convert_and_publish_path(self, shifted_coordinates):
+    def convert_and_publish_path(self, shifted_coordinates:list):
         """
         Create and send the path message
 
@@ -625,8 +610,6 @@ class PathGen:
         else:
             path = Path()
             self.path = Path()
-            slope_msg = Float32()
-            slope_angle_msg = Float32()
             path.header.frame_id = self.frame#"alpha_rise/base_link"
             path.header.stamp =  self.time
             for index, cords in enumerate(shifted_coordinates):
@@ -660,14 +643,54 @@ class PathGen:
                 pose_stamped.pose.orientation.w = 1
                 path.poses.append(pose_stamped)
             self.pub_path.publish(path)
-
-            slope_msg.data = self.slope
-            self.pub_slope.publish(slope_msg)
-            slope_angle_msg.data = math.degrees(self.angle_from_e_to_l)
-            self.pub_slope_angle.publish(slope_angle_msg)
-            self.pub_slope_angle.publish(slope_angle_msg)
     
+    def get_distance_to_obstacle(self, vx_image):
+        valid_points= []
+        sum_distance =0
+        raw_pixels = path_utils.find_cordinates_of_max_value(vx_image)
+        shifted_coordinates = [(x - self.height//2, self.width//2 - y) for x, y in raw_pixels]
+        """
+        ------>x COSTMAP IMAGE
+        |
+        |   ----->x'
+        |   |
+        |   |
+        |   Vy'
+       yV
+        """
+        shifted_coordinates = [(-y,-x) for x, y in shifted_coordinates]
+        """
+        ------>x COSTMAP IMAGE
+        |
+        |      ^x
+        |      |
+        |      |
+        |  y<--- VEHICLE FRAME
+        |   
+        yV
+        """
+
+        image_polar = [(np.sqrt(x**2 + y**2), np.degrees(np.arctan2(y, x))) for x,y in shifted_coordinates]
+
+        for points in image_polar:
+            if -135<points[1]<-45:
+                valid_points.append(points)
+        """
+                ^
+                | /
+                |/
+            <---
+                 \
+                  \
+        """
+        for points in valid_points:
+            sum_distance += points[0]
+        if len(valid_points)!= 0:
+            return (sum_distance * self.resolution)/len(valid_points)
+        else:
+            return 0
+        
 if __name__ == "__main__":
     rospy.init_node('path_node')
-    l = PathGen()
+    PathGen()
     rospy.spin()
