@@ -10,7 +10,7 @@ import cv2
 import math
 
 ##Viz functions.
-def compare_two_lists(list1, list2, height, width):
+def compare_two_lists(list1:list, list2:list, height:int, width:int):
     """
     Viz function to plot the original canny and extracted edge
 
@@ -35,7 +35,7 @@ def compare_two_lists(list1, list2, height, width):
     
     return image
 
-def compare_points_with_image(frame, points_list):
+def compare_points_with_image(frame:np.array, points_list:list):
     """
     Viz function to plot list of points in existing image
 
@@ -52,7 +52,7 @@ def compare_points_with_image(frame, points_list):
     return frame
 
 #Rotation Matrix
-def rotate_points(points, angle_radians):
+def rotate_points(points:list, angle_radians:float):
     """
     Rotation Matrix
     """
@@ -98,19 +98,13 @@ def find_cordinates_of_max_value(image:np.array):
     return max_intensity_coordinates
 
 #Fitting functions
-def model_f(x, a, b, c):
+def model_f(x, a:float, b:float, c:float):
     """
     The polynomial used to fit the points.
     """
     return a*x**2 + b* x**1 +c
 
-def linear_regression_model(x, a, b):
-    """
-    Linear regression
-    """
-    return a*x + b
-
-def calculate_slope(x_coords, y_coords):
+def calculate_slope(x_coords:list, y_coords:list):
     # Ensure there are at least two points
     if len(x_coords) < 2 or len(y_coords) < 2:
         raise ValueError("At least two points are required to calculate a slope.")
@@ -118,19 +112,31 @@ def calculate_slope(x_coords, y_coords):
     if len(x_coords) != len(y_coords):
         raise ValueError("The number of x and y coordinates must be the same.")
     
-    n = len(x_coords)
-    sum_x = sum(x_coords)
-    sum_y = sum(y_coords)
-    sum_xy = sum(x * y for x, y in zip(x_coords, y_coords))
-    sum_x_squared = sum(x ** 2 for x in x_coords)
+    # n = len(x_coords)
+    # sum_x = sum(x_coords)
+    # sum_y = sum(y_coords)
+    # sum_xy = sum(x * y for x, y in zip(x_coords, y_coords))
+    # sum_x_squared = sum(x ** 2 for x in x_coords)
+    # # Calculate the slope using the least squares formula
+    # numerator = n * sum_xy - sum_x * sum_y
+    # denominator = n * sum_x_squared - sum_x ** 2
     
-    # Calculate the slope using the least squares formula
-    numerator = n * sum_xy - sum_x * sum_y
-    denominator = n * sum_x_squared - sum_x ** 2
+    # if denominator == 0:
+    #     raise ValueError("Denominator is zero, cannot calculate slope. Check the input points.")
     
-    if denominator == 0:
-        raise ValueError("Denominator is zero, cannot calculate slope. Check the input points.")
+    # slope = numerator / denominator
     
-    slope = numerator / denominator
+    s_xx = sum([(x - np.mean(x_coords))**2 for x in x_coords])
+    s_yy = sum([(y - np.mean(y_coords))**2 for y in y_coords])
+    s_xy = sum([x-np.mean(x_coords)*(y-np.mean(y_coords)) for x,y in zip(x_coords,y_coords)])
     
-    return slope
+    # print(s_xx, s_yy, s_xy)
+    if s_xx > s_yy:
+        beta_1 = s_xy/s_xx
+        beta_0 = np.mean(y_coords) - beta_1*np.mean(x_coords)
+    elif s_xx < s_yy:
+        beta_1 = s_xy/s_yy
+        beta_1 = 1/beta_1
+        beta_0 = np.mean(x_coords) - beta_1*np.mean(y_coords)
+    #slope, intercept
+    return beta_1, beta_0

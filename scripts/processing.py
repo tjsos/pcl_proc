@@ -10,28 +10,31 @@ class Processing:
     def __init__(self) -> None:
         # Subscribe to the PointCloud2 topic
         is_stonefish = rospy.get_param("pcl_filter/stonefish", True)
+        pub_topic = rospy.get_param("pcl_filter/pub_topic")
         if is_stonefish:
-            sub_topic = rospy.get_param("pcl_filter/sf_sub_topic", '/alpha_rise/msis/stonefish/data/pointcloud')
+            sub_topic = rospy.get_param("pcl_filter/sf_sub_topic")
             self.std_dev_multiplier = rospy.get_param("pcl_filter/sf_std_dev_multiplier", 2)
             #This param is in meters.
             self.radial_filter = rospy.get_param("pcl_filter/sf_radial_filter_param", 2)
-            range_max = rospy.get_param("/stonefish/range_max", 50)
-            number_of_bins = rospy.get_param("/stonefish/number_of_bins", 100)
+            range_max = rospy.get_param("stonefish/range_max", 50)
+            number_of_bins = rospy.get_param("stonefish/number_of_bins", 100)
             
         else:
-            sub_topic = rospy.get_param("pcl_filter/sub_topic", '/alpha_rise/msis/pointcloud')
+            sub_topic = rospy.get_param("pcl_filter/sub_topic")
             self.std_dev_multiplier = rospy.get_param("pcl_filter/std_dev_multiplier", 2.55)
             #This param is in meters.
             self.radial_filter = rospy.get_param("pcl_filter/radial_filter_param", 2)
-            range_max = rospy.get_param("/ping360_sonar/range_max", 20)
-            number_of_bins = rospy.get_param("/ping360_sonar/number_of_bins", 1200)
+            range_max = rospy.get_param("ping360_sonar/range_max", 20)
+            number_of_bins = rospy.get_param("ping360_sonar/number_of_bins", 1200)
         #This(bin/meter) is to compare index(bin) with radial filter param(m)
         self.bin_meter_coeff = number_of_bins/range_max
         rospy.Subscriber(sub_topic, PointCloud2, self.pointcloud_callback)
+
+        self.pcl_pub = rospy.Publisher(pub_topic, PointCloud2, queue_size=1)
+
         # rospy.Subscriber('/alpha_rise/msis/pointcloud', PointCloud2, self.pointcloud_callback)
 
     def pointcloud_callback(self, pointcloud_msg):
-        pcl_pub = rospy.Publisher("/alpha_rise/msis/pointcloud/filtered", PointCloud2, queue_size=1)
         pcl_msg = PointCloud2()
         pcl_msg.header.frame_id = pointcloud_msg.header.frame_id
         pcl_msg.header.stamp = pointcloud_msg.header.stamp
@@ -68,7 +71,7 @@ class Processing:
                 points[index][3] = nan
         
         pcl_msg.data = points.tobytes()
-        pcl_pub.publish(pcl_msg)
+        self.pcl_pub.publish(pcl_msg)
 
     def get_intensities(self,pointcloud_msg):
         """
