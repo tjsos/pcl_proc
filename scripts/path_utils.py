@@ -128,7 +128,7 @@ def calculate_slope(x_coords:list, y_coords:list):
     
     s_xx = sum([(x - np.mean(x_coords))**2 for x in x_coords])
     s_yy = sum([(y - np.mean(y_coords))**2 for y in y_coords])
-    s_xy = sum([x-np.mean(x_coords)*(y-np.mean(y_coords)) for x,y in zip(x_coords,y_coords)])
+    s_xy = sum([(x - np.mean(x_coords))*(y - np.mean(y_coords)) for x,y in zip(x_coords,y_coords)])
     
     # print(s_xx, s_yy, s_xy)
     if s_xx > s_yy:
