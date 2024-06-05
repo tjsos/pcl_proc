@@ -136,7 +136,9 @@ def calculate_slope(x_coords:list, y_coords:list):
         beta_0 = np.mean(y_coords) - beta_1*np.mean(x_coords)
     elif s_xx < s_yy:
         beta_1 = s_xy/s_yy
-        beta_1 = 1/beta_1
         beta_0 = np.mean(x_coords) - beta_1*np.mean(y_coords)
+        #Get it in relative to x
+        beta_0 = beta_0/beta_1
+        beta_1 = 1/beta_1
     #slope, intercept
     return beta_1, beta_0
