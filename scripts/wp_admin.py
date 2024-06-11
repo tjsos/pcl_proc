@@ -7,21 +7,24 @@
 
 import rospy
 from nav_msgs.msg import Path
-from geometry_msgs.msg import PolygonStamped, Point32
+from geometry_msgs.msg import PolygonStamped, Point32, PointStamped
+from std_msgs.msg import Float32
 import tf.transformations as tf_transform
 import math
 from mvp_msgs.srv import GetStateRequest, GetState, ChangeState, ChangeStateRequest
 import time
 import tf2_ros
 import tf2_geometry_msgs
+import numpy as np
 
 class Wp_Admin:
     def __init__(self):
         #Get Params
         self.distance_in_meters = rospy.get_param("path_generator/standoff_distance_meters",15)
-        path_topic = rospy.get_param("path_generator/path_topic", "/path")
-        update_waypoint_topic = rospy.get_param("waypoint_admin/update_waypoint_topic", "/alpha_rise/helm/path_3d/update_waypoints")
-        append_waypoint_topic = rospy.get_param("waypoint_admin/append_waypoint_topic", "/alpha_rise/helm/path_3d/append_waypoints")
+        path_topic = rospy.get_param("path_generator/path_topic")
+        update_waypoint_topic = rospy.get_param("waypoint_admin/update_waypoint_topic")
+        append_waypoint_topic = rospy.get_param("waypoint_admin/append_waypoint_topic")
+        distance_to_obstacle_topic = rospy.get_param("path_generator/distance_to_obstacle_topic")
         self.get_state_service = rospy.get_param("waypoint_admin/get_state_service", "/alpha_rise/helm/get_state")
         self.change_state_service = rospy.get_param("waypoint_admin/change_state_service", "/alpha_rise/helm/change_state")
      
@@ -31,14 +34,21 @@ class Wp_Admin:
         
         #Declare Subs
         rospy.Subscriber(path_topic, Path, callback=self.path_cB)
+        rospy.Subscriber(distance_to_obstacle_topic, Float32, callback= self.distance_cB)
 
         #Declare variables
         self.vx_yaw = 0
         self.start_time = time.time()
-        self.state = "survey_3d"
+        self.state = None
+        self.distance_to_obstacle = None
 
         self.tf_buffer = tf2_ros.Buffer()
         self.listener = tf2_ros.TransformListener(self.tf_buffer)
+
+        self.node_name = rospy.get_name()
+    
+    def distance_cB(self, msg):
+        self.distance_to_obstacle = msg.data
 
     def path_cB(self, msg):
         #Get ODOM to VX TF
@@ -64,27 +74,32 @@ class Wp_Admin:
         #Check state whether survey_3d or start
         self.check_state()
         if self.state == "survey_3d":
-            goal = self.find_point_to_follow(msg)  
-            if goal != None:
-                x_c = goal.pose.position.x
-                y_c = goal.pose.position.y
-                
-                wp.polygon.points.append(Point32(x_c ,y_c, 0))
+            # if self.distance_to_obstacle > 12:
+                goal = self.find_point_to_follow(msg)  
+                if goal != None:
+                    x_c = goal.pose.position.x
+                    y_c = goal.pose.position.y
+                    
+                    wp.polygon.points.append(Point32(x_c ,y_c, 0))
 
-                self.pub_update.publish(wp)
+                    self.pub_update.publish(wp)
+                else:
+                    print("Following BHVR", time.time())
 
         elif self.state == "start":
+            self.bhvr_start_time = time.time()
+            
             #Switch state to survey_3d
             service_client_change_state = rospy.ServiceProxy(self.change_state_service, ChangeState)
-            request = ChangeStateRequest("survey_3d")
+            request = ChangeStateRequest("survey_3d", self.node_name)
             response = service_client_change_state(request)
             print(f"changed to {response.state.name}")
+            corner_bhvr_points = self.corner_behaviour(number_of_points=20)
             
-            x_b, y_b = self.extend_line_from_point([self.vx_x, self.vx_y], self.vx_yaw, length=self.distance_in_meters)
-            x_c, y_c = self.extend_line_from_point([x_b, y_b], self.vx_yaw-45, length=self.distance_in_meters)
-            wp.polygon.points.append(Point32(x_b ,y_b, 0))
-            wp.polygon.points.append(Point32(x_c ,y_c, 0))
-
+            #Append the waypoints
+            for i in range(len(corner_bhvr_points)):
+                wp.polygon.points.append(Point32(corner_bhvr_points[i].point.x ,corner_bhvr_points[i].point.y, 0))
+                
             self.pub_update.publish(wp)
 
     def check_state(self):
@@ -166,6 +181,32 @@ class Wp_Admin:
         theta_radians = math.atan2(delta_y, delta_x)
         direction = math.degrees(theta_radians)
         return distance, direction
+
+    def corner_behaviour(self, number_of_points):
+        #init lists
+        corner_bhvr_points = []
+        points_in_odom_frame = []
+        
+        #The center point of the circle in vx frame
+        point_of_obstacle = [self.distance_in_meters, -self.distance_in_meters]
+        
+        #list of angle increments
+        angles = np.linspace(math.pi/2, 0, number_of_points)
+        
+        #list of circle points in vx_frame
+        corner_bhvr_points = [(point_of_obstacle[0] + self.distance_in_meters * math.cos(angle), 
+                            point_of_obstacle[1] + self.distance_in_meters * math.sin(angle))
+                            for angle in angles]
+        
+        #Tf to odom frame
+        for points in corner_bhvr_points:
+            point_msg = PointStamped()
+            point_msg.point.x = points[0]
+            point_msg.point.y = points[1]
+            point_in_odom_frame = tf2_geometry_msgs.do_transform_point(point_msg, self.base_to_odom_tf)
+            points_in_odom_frame.append(point_in_odom_frame)
+
+        return points_in_odom_frame
 
 if __name__ == "__main__":
     rospy.init_node("waypoint_administrator")
