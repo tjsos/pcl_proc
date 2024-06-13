@@ -5,6 +5,7 @@
 #Assigns waypoints from the path to be fed to the vx nav system.
 #tony.jacob@uri.edu
 
+#rosbag record /alpha_rise/path/current_state /alpha_rise/path/distance_to_obstacle /alpha_rise/odometry/filtered/local
 import rospy
 from nav_msgs.msg import Path
 from geometry_msgs.msg import PolygonStamped, Point32, PointStamped
@@ -24,6 +25,7 @@ class Wp_Admin:
         path_topic = rospy.get_param("path_generator/path_topic")
         update_waypoint_topic = rospy.get_param("waypoint_admin/update_waypoint_topic")
         append_waypoint_topic = rospy.get_param("waypoint_admin/append_waypoint_topic")
+        state_topic = rospy.get_param("waypoint_admin/state_topic")
         distance_to_obstacle_topic = rospy.get_param("path_generator/distance_to_obstacle_topic")
         self.get_state_service = rospy.get_param("waypoint_admin/get_state_service", "/alpha_rise/helm/get_state")
         self.change_state_service = rospy.get_param("waypoint_admin/change_state_service", "/alpha_rise/helm/change_state")
@@ -31,6 +33,7 @@ class Wp_Admin:
         #Declare Pubs
         self.pub_update = rospy.Publisher(update_waypoint_topic, PolygonStamped, queue_size=1)
         self.pub_append = rospy.Publisher(append_waypoint_topic, PolygonStamped, queue_size=1)
+        self.pub_state = rospy.Publisher(state_topic, Float32, queue_size=1)
         
         #Declare Subs
         rospy.Subscriber(path_topic, Path, callback=self.path_cB)
@@ -83,11 +86,12 @@ class Wp_Admin:
                     wp.polygon.points.append(Point32(x_c ,y_c, 0))
 
                     self.pub_update.publish(wp)
+                    self.pub_state.publish(1)
                 else:
-                    print("Following BHVR", time.time())
+                    self.pub_state.publish(0)
 
         elif self.state == "start":
-            self.bhvr_start_time = time.time()
+            self.pub_state.publish(0)
             
             #Switch state to survey_3d
             service_client_change_state = rospy.ServiceProxy(self.change_state_service, ChangeState)
@@ -105,7 +109,7 @@ class Wp_Admin:
     def check_state(self):
         elapsed_time = time.time() - self.start_time
         #Check state every 2s
-        if elapsed_time > 2:
+        if elapsed_time > 0.5:
             self.start_time = time.time()
             service_client_get_state = rospy.ServiceProxy(self.get_state_service, GetState)
             request = GetStateRequest("")

@@ -16,5 +16,6 @@ path_generator:
 waypoint_admin:
   update_waypoint_topic: "helm/path_3d/update_waypoints"
   append_waypoint_topic: "helm/path_3d/append_waypoints"
+  state_topic: "path/current_state"
   get_state_service: "/alpha_rise/helm/get_state"
   change_state_service: "/alpha_rise/helm/change_state"

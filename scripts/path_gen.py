@@ -166,12 +166,13 @@ class PathGen:
         Visualization
         """
         if self.debug:
+            vx_frame_image_copy = vx_frame_image.copy()
         ## Compare the Canny and Custom
             compare_path = path_utils. compare_two_lists(raw_pixels, path_odom_frame, self.height, self.width)
             viz_edges = path_utils.compare_two_lists(raw_pixels, edge, self.height, self.width)
-            compare_edge = path_utils.compare_points_with_image(vx_frame_image, path_cells)
+            compare_edge = path_utils.compare_points_with_image(vx_frame_image_copy, path_cells)
 
-            mix= np.hstack((data, viz_edges,compare_edge, compare_path))
+            mix= np.hstack((data, viz_edges,vx_frame_image, compare_edge, compare_path))
             cv2.imshow("window", mix)
             cv2.imshow("edge_frame", edge_frame_debug)
             cv2.waitKey(1)
@@ -644,9 +645,9 @@ class PathGen:
                 path.poses.append(pose_stamped)
             self.pub_path.publish(path)
     
-    def get_distance_to_obstacle(self, vx_image):
-        valid_points= []
-        sum_distance =0
+    def get_distance_to_obstacle(self, vx_image:np.array):
+        min_y = float('inf')
+        shortest_point = None
         raw_pixels = path_utils.find_cordinates_of_max_value(vx_image)
         shifted_coordinates = [(x - self.height//2, self.width//2 - y) for x, y in raw_pixels]
         """
@@ -669,26 +670,14 @@ class PathGen:
         |   
         yV
         """
-
         image_polar = [(np.sqrt(x**2 + y**2), np.degrees(np.arctan2(y, x))) for x,y in shifted_coordinates]
+        for r,theta in image_polar:
+            if r < min_y:
+                min_y = r
+                shortest_point = [r,theta]
 
-        for points in image_polar:
-            if -135<points[1]<-45:
-                valid_points.append(points)
-        """
-                ^
-                | /
-                |/
-            <---
-                 \
-                  \
-        """
-        for points in valid_points:
-            sum_distance += points[0]
-        if len(valid_points)!= 0:
-            return (sum_distance * self.resolution)/len(valid_points)
-        else:
-            return 0
+        shortest_point_cartesian = shortest_point[0]  * self.resolution
+        return shortest_point_cartesian
         
 if __name__ == "__main__":
     rospy.init_node('path_node')
