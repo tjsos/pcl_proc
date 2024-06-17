@@ -91,11 +91,14 @@ def find_cordinates_of_max_value(image:np.array):
         max_intensity_coordinates: [[x,y]] of edges.
     """
     max_intensity = np.max(image)
-    # Get the coordinates of pixels with the maximum intensity
-    max_intensity_coordinates = np.column_stack(np.where(image == max_intensity))
-    # column_stack GIVES INVERTED [x,y] from that of image frame
-    max_intensity_coordinates = [[y,x] for x,y in max_intensity_coordinates]
-    return max_intensity_coordinates
+    if max_intensity != 0:
+        # Get the coordinates of pixels with the maximum intensity
+        max_intensity_coordinates = np.column_stack(np.where(image == max_intensity))
+        # column_stack GIVES INVERTED [x,y] from that of image frame
+        max_intensity_coordinates = [[y,x] for x,y in max_intensity_coordinates]
+        return max_intensity_coordinates
+    else:
+        return None
 
 #Fitting functions
 def model_f(x, a:float, b:float, c:float):
