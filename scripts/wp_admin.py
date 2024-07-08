@@ -98,8 +98,6 @@ class Wp_Admin:
 
                 self.pub_update.publish(wp)
                 self.pub_state.publish(0)
-            else:
-                self.pub_state.publish(1)
 
         elif self.state == "start":
             #Switch state to survey_3d
@@ -113,7 +111,6 @@ class Wp_Admin:
                 wp.polygon.points.append(Point32(corner_bhvr_points[i].point.x ,corner_bhvr_points[i].point.y, 0))
                 
             self.pub_update.publish(wp)
-            self.pub_state.publish(1)
 
     def check_state(self):
         elapsed_time = time.time() - self.start_time
@@ -194,6 +191,7 @@ class Wp_Admin:
                 return farthest_point
         except ValueError:
             print("No valid point")
+            self.pub_state.publish(1)
             return None
 
     def get_vector(self, point1, point2, point3):

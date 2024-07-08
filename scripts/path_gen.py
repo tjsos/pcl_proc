@@ -16,6 +16,7 @@ import cv2
 import math
 import scipy
 import path_utils
+import time
 
 class PathGen:
     def __init__(self) -> None:
@@ -54,6 +55,8 @@ class PathGen:
         
         #path placeholder
         self.poses = []
+
+        self.start_time = 0
         
     def mapCB(self, message:OccupancyGrid):
         """
@@ -160,7 +163,10 @@ class PathGen:
         Distance to Obstacle
         """
         distance_to_obstacle = self.get_distance_to_obstacle(vx_frame_image)
-        self.obstacle_distance_pub.publish(distance_to_obstacle)
+        elapsed_time = time.time() - self.start_time
+        if elapsed_time > 1:
+            self.start_time = time.time()
+            self.obstacle_distance_pub.publish(distance_to_obstacle)
 
         """
         Visualization
@@ -707,10 +713,9 @@ class PathGen:
             """
             image_polar = [(np.sqrt(x**2 + y**2), np.degrees(np.arctan2(y, x))) for x,y in shifted_coordinates]
             for r,theta in image_polar:
-                if theta > -90:
-                    if r < min_y:
-                        min_y = r
-                        shortest_point = [r,theta]
+                if r < min_y:
+                    min_y = r
+                    shortest_point = [r,theta]
             if shortest_point != None:
                 shortest_point_cartesian = shortest_point[0]  * self.resolution
                 return shortest_point_cartesian
