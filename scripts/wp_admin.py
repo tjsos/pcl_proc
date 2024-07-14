@@ -12,7 +12,7 @@ from geometry_msgs.msg import PolygonStamped, Point32, PointStamped, PoseStamped
 from std_msgs.msg import Float32
 import tf.transformations as tf_transform
 import math
-from mvp_msgs.srv import GetStateRequest, GetState, ChangeState, ChangeStateRequest
+from mvp_msgs.srv import GetStateRequest, GetState, ChangeState, ChangeStateRequest, GetWaypoints, GetWaypointsRequest
 import time
 import tf2_ros
 import tf2_geometry_msgs
@@ -30,12 +30,14 @@ class Wp_Admin:
         odom_topic = rospy.get_param("waypoint_admin/odom_topic")
         self.get_state_service = rospy.get_param("waypoint_admin/get_state_service", "/alpha_rise/helm/get_state")
         self.change_state_service = rospy.get_param("waypoint_admin/change_state_service", "/alpha_rise/helm/change_state")
+        self.get_waypoint_service = rospy.get_param("waypoint_admin/get_waypoint", "/alpha_rise/helm/path_3d/get_next_waypoints")
 
         #Waypoint selection param
         self.update_rate = rospy.get_param("waypoint_admin/check_state_update_rate")
         self.min_scan_angle = rospy.get_param("waypoint_admin/min_scan_angle")
         self.max_scan_angle = rospy.get_param("waypoint_admin/max_scan_angle")
         self.acceptance_threshold = rospy.get_param("waypoint_admin/acceptance_threshold")
+        self.depth = rospy.get_param("waypoint_admin/z_value")
         
         #Declare Pubs
         self.pub_update = rospy.Publisher(update_waypoint_topic, PolygonStamped, queue_size=1)
@@ -52,6 +54,7 @@ class Wp_Admin:
         self.start_time = time.time()
         self.state = None
         self.distance_to_obstacle = None
+        self.ice_reacquisition = False
 
         self.tf_buffer = tf2_ros.Buffer()
         self.listener = tf2_ros.TransformListener(self.tf_buffer)
@@ -60,6 +63,14 @@ class Wp_Admin:
     
     def distance_cB(self, msg):
         self.distance_to_obstacle = msg.data
+        
+        get_waypoint_client = rospy.ServiceProxy(self.get_waypoint_service, GetWaypoints)
+        request = GetWaypointsRequest()
+        response = get_waypoint_client(request)
+        if len(response.wpt) == 2:
+            self.pub_state.publish(0)
+        else:
+            self.pub_state.publish(1)
 
     def odom_cB(self, msg):
         self.lin_x = msg.twist.twist.linear.x
@@ -88,18 +99,26 @@ class Wp_Admin:
         
         #Check state whether survey_3d or start
         self.check_state()
-        goal = self.find_point_to_follow(msg)  
-        if self.state == "survey_3d":
-            if goal != None:
-                x_c = goal.pose.position.x
-                y_c = goal.pose.position.y
+        if len(msg.poses) > 10:
+            #If valid path
+            goal = self.find_point_to_follow(msg)  
+            if self.state == "survey_3d":
+                if goal != None:
+                    x_c = goal.pose.position.x
+                    y_c = goal.pose.position.y
+                    wp.polygon.points.append(Point32(x_c ,y_c, self.depth))
+                    self.pub_update.publish(wp)
+
+            elif self.state == "start":
+                #No valid points, corner bhvr
+                self.no_path_bhvr(wp)
                 
-                wp.polygon.points.append(Point32(x_c ,y_c, 0))
+        else:
+            #Else no path, iceberg acquisiton mode
+            self.no_path_bhvr(wp)
 
-                self.pub_update.publish(wp)
-                self.pub_state.publish(0)
-
-        elif self.state == "start":
+    def no_path_bhvr(self, wp):
+        if self.state == "start":
             #Switch state to survey_3d
             service_client_change_state = rospy.ServiceProxy(self.change_state_service, ChangeState)
             request = ChangeStateRequest("survey_3d", self.node_name)
@@ -108,7 +127,7 @@ class Wp_Admin:
         
             #Append the waypoints
             for i in range(len(corner_bhvr_points)):
-                wp.polygon.points.append(Point32(corner_bhvr_points[i].point.x ,corner_bhvr_points[i].point.y, 0))
+                wp.polygon.points.append(Point32(corner_bhvr_points[i].point.x ,corner_bhvr_points[i].point.y, self.depth))
                 
             self.pub_update.publish(wp)
 
@@ -159,39 +178,26 @@ class Wp_Admin:
                                                           next_point_in_vx_frame.pose.position.y])
             #Filter out a sector. REP 103 convention. +ve is counterclockwise from vehicle nose.
             if self.min_scan_angle < direction_vx and direction_vx < self.max_scan_angle:
-                #Gather pose_msgs, xy, and distances of such points
-                valid_pose.append(pose_stamped)
-                valid_xy.append([point_in_vx_frame.pose.position.x,
-                                point_in_vx_frame.pose.position.y])
-                valid_polar.append(distance_vx)
-                relative_yaw.append([direction_vx, direction_rel])
+                if distance_vx > self.acceptance_threshold:
+                    #Gather pose_msgs, xy, and distances of such points
+                    valid_pose.append(pose_stamped)
+                    valid_xy.append([point_in_vx_frame.pose.position.x,
+                                    point_in_vx_frame.pose.position.y])
+                    valid_polar.append(distance_vx)
+                    relative_yaw.append([direction_vx, direction_rel])
         
         valid_polar_norm_velocity = [distance_vx/self.lin_x for distance_vx in valid_polar]
-        relative_yaw_norm_velocity = [(np.radians(direction_vx)/self.ang_z) + (np.radians(direction_rel)/self.ang_z) for direction_vx, direction_rel in relative_yaw]
+        relative_yaw_norm_velocity = [abs(np.radians(direction_vx)/self.ang_z) + abs(np.radians(direction_rel)/self.ang_z) for direction_vx, direction_rel in relative_yaw]
 
-        time_for_point = [linx_time + angz_time for linx_time, angz_time in zip(valid_polar_norm_velocity, relative_yaw_norm_velocity)]
+        time_for_point = [linx_time + abs(angz_time) for linx_time, angz_time in zip(valid_polar_norm_velocity, relative_yaw_norm_velocity)]
         try:
-            min_value = min(time_for_point)
-            min_index = time_for_point.index(min_value)
-            all_y_less_than_threshold = all(y < self.acceptance_threshold for x,y in valid_xy)
-            
-            if not all_y_less_than_threshold:
-                print("BEST POINT BHVR", time.time())
-                print(min_value)
-                return valid_pose[min_index]
-            
-            else:
-                farthest_point = None
-                max_distance = float('-inf')
-                for index, point in enumerate(valid_pose):
-                    if valid_polar[index] > max_distance:
-                        max_distance = valid_polar[index]
-                        farthest_point = point
-                print("FARTHEST POINT BHVR", time.time())
-                return farthest_point
+            closest = min(time_for_point)
+            min_index = time_for_point.index(closest)
+            print("BEST POINT BHVR", time.time())
+            return valid_pose[min_index]
+
         except ValueError:
-            print("No valid point")
-            self.pub_state.publish(1)
+            print("No valid point", time.time())
             return None
 
     def get_vector(self, point1, point2, point3):
