@@ -20,8 +20,10 @@ waypoint_admin:
   odom_topic: "/alpha_rise/odometry/filtered/local"
   get_state_service: "/alpha_rise/helm/get_state"
   change_state_service: "/alpha_rise/helm/change_state"
+  get_waypoint_service: "/alpha_rise/helm/path_3d/get_next_waypoints"
 
   check_state_update_rate: 1 #sec
   min_scan_angle: -30 #degrees
-  max_scan_angle: 60
-  acceptance_threshold: 5 #meters
+  max_scan_angle: 90
+  acceptance_threshold: 10 #meters
+  z_value: 0 #meters 
