@@ -86,37 +86,6 @@ class PathGen:
         self.time = message.header.stamp
 
         self.resolution = message.info.resolution
-
-        # # Broadcast Odom-> Costmap TF
-        # odom_costmap_tf = TransformStamped()
-        # odom_costmap_tf.header.stamp = rospy.Time.now()
-        # odom_costmap_tf.header.frame_id = 'alpha_rise/odom'
-        # odom_costmap_tf.child_frame_id = 'alpha_rise/costmap'
-        # odom_costmap_tf.transform.translation.x = message.info.origin.position.x
-        # odom_costmap_tf.transform.translation.y = message.info.origin.position.y
-        # odom_costmap_tf.transform.translation.z = 0
-        # odom_costmap_tf.transform.rotation.x = 0
-        # odom_costmap_tf.transform.rotation.y = 0
-        # odom_costmap_tf.transform.rotation.z = 0
-        # odom_costmap_tf.transform.rotation.w = 1
-        # self.br.sendTransform(odom_costmap_tf)
-
-        # # Broadcast Costmap-> Costmap Image TF
-        # costmap_costmap_image_tf = TransformStamped()
-        # costmap_costmap_image_tf.header.stamp = rospy.Time.now()
-        # costmap_costmap_image_tf.header.frame_id = 'alpha_rise/costmap'
-        # costmap_costmap_image_tf.child_frame_id = 'alpha_rise/costmap/image'
-        # # Width(cells) * resolution (meters/cell) = meters.
-        # costmap_costmap_image_tf.transform.translation.x = self.width * self.resolution
-        # costmap_costmap_image_tf.transform.translation.y = self.height * self.resolution
-        # costmap_costmap_image_tf.transform.translation.z = 0
-        # costmap_costmap_image_tf.transform.rotation.x = 0.7071
-        # costmap_costmap_image_tf.transform.rotation.y = -0.7072
-        # costmap_costmap_image_tf.transform.rotation.z = 0
-        # costmap_costmap_image_tf.transform.rotation.w = 0
-
-        # self.br.sendTransform(costmap_costmap_image_tf)
-
         
         """
         Image
@@ -631,44 +600,41 @@ class PathGen:
             shifted_coordinates: List of fitted points in odom frame
         """
         if shifted_coordinates!=None:
-            if type(shifted_coordinates) == int:
-                return -1
-        
-            else:
-                path = Path()
-                path.header.frame_id = self.frame#"alpha_rise/base_link"
-                path.header.stamp =  self.time
-                for index, cords in enumerate(shifted_coordinates):
-                    pose_stamped = PoseStamped()
-                    pose_stamped.header.frame_id = self.frame#
-                    pose_stamped.header.stamp = self.time
-                    pose_stamped.header.seq = index
+            path = Path()
+            path.header.frame_id = self.frame#"alpha_rise/base_link"
+            path.header.stamp =  self.time
+            for index, cords in enumerate(shifted_coordinates):
+                pose_stamped = PoseStamped()
+                pose_stamped.header.frame_id = self.frame#
+                pose_stamped.header.stamp = self.time
+                pose_stamped.header.seq = index
 
-                    #IMAGE TO MAP FRAME FIXED TO ODOMs
-                    """
-                    ------>x COSTMAP IMAGE
-                    |
-                    |      ^x
-                    |      |
-                    |      |
-                    |  y<--- VEHICLE FRAME
-                    |   
-                    yV
-                    """
-                    x = -cords[1]
-                    y = -cords[0] 
+                #IMAGE TO MAP FRAME FIXED TO ODOMs
+                """
+                ------>x COSTMAP IMAGE
+                |
+                |      ^x
+                |      |
+                |      |
+                |  y<--- VEHICLE FRAME
+                |   
+                yV
+                """
+                x = -cords[1]
+                y = -cords[0] 
 
-                    x = ((self.width//2 + x) * self.resolution) + self.vx_x
-                    y = ((self.height//2 + y)* self.resolution ) + self.vx_y
+                x = ((self.width//2 + x) * self.resolution) + self.vx_x
+                y = ((self.height//2 + y)* self.resolution ) + self.vx_y
 
-                    pose_stamped.pose.position.x = x#self.height//4 - cords[1] * self.resolution
-                    pose_stamped.pose.position.y = y#self.height//4 - cords[0] * self.resolution 
-                    pose_stamped.pose.orientation.x = 0
-                    pose_stamped.pose.orientation.y = 0
-                    pose_stamped.pose.orientation.z = 0
-                    pose_stamped.pose.orientation.w = 1
-                    path.poses.append(pose_stamped)
-                self.pub_path.publish(path)
+                pose_stamped.pose.position.x = x#self.height//4 - cords[1] * self.resolution
+                pose_stamped.pose.position.y = y#self.height//4 - cords[0] * self.resolution 
+                pose_stamped.pose.orientation.x = 0
+                pose_stamped.pose.orientation.y = 0
+                pose_stamped.pose.orientation.z = 0
+                pose_stamped.pose.orientation.w = 1
+                path.poses.append(pose_stamped)
+            self.pub_path.publish(path)
+
         else:
             path = Path()
             path.header.frame_id = self.frame#"alpha_rise/base_link"
@@ -676,8 +642,8 @@ class PathGen:
             pose_stamped = PoseStamped()
             pose_stamped.header.frame_id = self.frame#
             pose_stamped.header.stamp = self.time
-            pose_stamped.pose.position.x = self.vx_x#self.height//4 - cords[1] * self.resolution
-            pose_stamped.pose.position.y = self.vx_y#self.height//4 - cords[0] * self.resolution 
+            pose_stamped.pose.position.x = self.vx_x  #self.height//4 - cords[1] * self.resolution
+            pose_stamped.pose.position.y = self.vx_y #self.height//4 - cords[0] * self.resolution 
             pose_stamped.pose.orientation.x = 0
             pose_stamped.pose.orientation.y = 0
             pose_stamped.pose.orientation.z = 0
@@ -720,7 +686,7 @@ class PathGen:
                 shortest_point_cartesian = shortest_point[0]  * self.resolution
                 return shortest_point_cartesian
         else:
-            return None
+            return -1
         
 if __name__ == "__main__":
     rospy.init_node('path_node')
