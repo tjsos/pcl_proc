@@ -27,7 +27,7 @@ class Wp_Admin:
         append_waypoint_topic = rospy.get_param("waypoint_admin/append_waypoint_topic")
         state_topic = rospy.get_param("waypoint_admin/state_topic")
         distance_to_obstacle_topic = rospy.get_param("path_generator/distance_to_obstacle_topic")
-        odom_topic = rospy.get_param("waypoint_admin/odom_topic")
+
         self.get_state_service = rospy.get_param("waypoint_admin/get_state_service", "/alpha_rise/helm/get_state")
         self.change_state_service = rospy.get_param("waypoint_admin/change_state_service", "/alpha_rise/helm/change_state")
         self.get_waypoint_service = rospy.get_param("waypoint_admin/get_waypoint", "/alpha_rise/helm/path_3d/get_next_waypoints")
@@ -38,6 +38,8 @@ class Wp_Admin:
         self.max_scan_angle = rospy.get_param("waypoint_admin/max_scan_angle")
         self.acceptance_threshold = rospy.get_param("waypoint_admin/acceptance_threshold")
         self.depth = rospy.get_param("waypoint_admin/z_value")
+        self.max_surge_velocity = rospy.get_param("helm/path_3d/surge_velocity")
+        self.max_yaw_rate = rospy.get_param("helm/teleop/max_yaw_rate")
         
         #Declare Pubs
         self.pub_update = rospy.Publisher(update_waypoint_topic, PolygonStamped, queue_size=1)
@@ -47,7 +49,6 @@ class Wp_Admin:
         #Declare Subs
         rospy.Subscriber(path_topic, Path, callback=self.path_cB)
         rospy.Subscriber(distance_to_obstacle_topic, Float32, callback= self.distance_cB)
-        rospy.Subscriber(odom_topic, Odometry, callback=self.odom_cB)
 
         #Declare variables
         self.vx_yaw = 0
@@ -71,10 +72,6 @@ class Wp_Admin:
             self.pub_state.publish(0)
         else:
             self.pub_state.publish(1)
-
-    def odom_cB(self, msg):
-        self.lin_x = msg.twist.twist.linear.x
-        self.ang_z = msg.twist.twist.angular.z
 
     def path_cB(self, msg):
         #Get ODOM to VX TF
@@ -186,8 +183,8 @@ class Wp_Admin:
                     valid_polar.append(distance_vx)
                     relative_yaw.append([direction_vx, direction_rel])
         
-        valid_polar_norm_velocity = [distance_vx/self.lin_x for distance_vx in valid_polar]
-        relative_yaw_norm_velocity = [abs(np.radians(direction_vx)/self.ang_z) + abs(np.radians(direction_rel)/self.ang_z) for direction_vx, direction_rel in relative_yaw]
+        valid_polar_norm_velocity = [distance_vx/self.max_surge_velocity for distance_vx in valid_polar]
+        relative_yaw_norm_velocity = [abs(np.radians(direction_vx)/self.max_yaw_rate) + abs(np.radians(direction_rel)/self.max_yaw_rate) for direction_vx, direction_rel in relative_yaw]
 
         time_for_point = [linx_time + abs(angz_time) for linx_time, angz_time in zip(valid_polar_norm_velocity, relative_yaw_norm_velocity)]
         try:
