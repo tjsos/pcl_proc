@@ -722,7 +722,7 @@ class PathGen:
     def get_best_point(self, line_frame_points):
         valid_point, valid_distance, valid_angle, valid_track = [],[],[], []
         # line_frame_points = reversed(line_frame_points)
-        for index, point in enumerate(reversed(line_frame_points)):
+        for index, point in enumerate((line_frame_points)):
             #Get distance to all points from vx{L}
             # vehicle_to_point_distance = math.sqrt((self.vx_line_frame[0] - point[0])**2 + (self.vx_line_frame[1] - point[1])**2)
             vehicle_to_point_distance = math.sqrt((point[0] - self.vx_line_frame[0])**2 + (point[1] - self.vx_line_frame[1])**2)
@@ -760,7 +760,7 @@ class PathGen:
         yaw_component = [angle/self.max_yaw_rate for angle in valid_angle]
         track_component = [angle/self.max_yaw_rate for angle in valid_track]
         
-        angular_component = [abs(path_utils.sum_angles_radians(track, -ang)) for ang, track in zip(yaw_component, track_component)]
+        angular_component = [(path_utils.sum_angles_radians(ang, -track)) for ang, track in zip(yaw_component, track_component)]
 
         # cost = [lin + ang for lin, ang in zip(lin_component, angular_component)]
         cost = [ ang for  ang in angular_component]
