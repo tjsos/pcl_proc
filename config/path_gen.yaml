@@ -4,7 +4,7 @@ path_generator:
   costmap_topic: 'move_base/local_costmap/costmap'
   path_topic: 'path'
   distance_to_obstacle_topic: 'path/distance_to_obstacle'
-  debug: false
+  debug: true
 
   canny_min_threshold: 200
   canny_max_threshold: 255
@@ -26,4 +26,4 @@ waypoint_admin:
   min_scan_angle: -30 #degrees
   max_scan_angle: 90
   acceptance_threshold: 10 #meters
-  z_value: 0 #meters 
+  z_value: -5 #meters 

@@ -8,7 +8,7 @@
 #rosbag record /alpha_rise/path/current_state /alpha_rise/path/distance_to_obstacle /alpha_rise/odometry/filtered/local
 import rospy
 from nav_msgs.msg import Path, Odometry
-from geometry_msgs.msg import PolygonStamped, Point32, PointStamped, PoseStamped
+from geometry_msgs.msg import PolygonStamped, Point32, PointStamped, PoseStamped, Point
 from std_msgs.msg import Float32
 import tf.transformations as tf_transform
 import math
@@ -49,6 +49,7 @@ class Wp_Admin:
         #Declare Subs
         rospy.Subscriber(path_topic, Path, callback=self.path_cB)
         rospy.Subscriber(distance_to_obstacle_topic, Float32, callback= self.distance_cB)
+        rospy.Subscriber(path_topic +"/best_point", Point, callback=self.point_cB)
 
         #Declare variables
         self.vx_yaw = 0
@@ -62,6 +63,9 @@ class Wp_Admin:
 
         self.node_name = rospy.get_name()
     
+    def point_cB(self, msg):
+        self.x, self.y, z = msg.x, msg.y, msg.z
+
     def distance_cB(self, msg):
         self.distance_to_obstacle = msg.data
         
@@ -101,8 +105,8 @@ class Wp_Admin:
             goal = self.find_point_to_follow(msg)  
             if self.state == "survey_3d":
                 if goal != None:
-                    x_c = goal.pose.position.x
-                    y_c = goal.pose.position.y
+                    x_c = self.x #goal.pose.position.x
+                    y_c = self.y #goal.pose.position.y
                     wp.polygon.points.append(Point32(x_c ,y_c, self.depth))
                     self.pub_update.publish(wp)
 
@@ -161,7 +165,7 @@ class Wp_Admin:
             #Transform the points in vx frame
             point_in_vx_frame = tf2_geometry_msgs.do_transform_pose(path_msg.poses[index], self.odom_to_base_tf)
             #Take the next points. If it is last point.
-            if index > 20:
+            if index < len(path_msg.poses)-2:
                 next_point_in_vx_frame = tf2_geometry_msgs.do_transform_pose(path_msg.poses[index+1], self.odom_to_base_tf)
             else:
                 next_point_in_vx_frame.pose.position.x = point_in_vx_frame.pose.position.x
@@ -173,6 +177,8 @@ class Wp_Admin:
                                                          
                                                          [next_point_in_vx_frame.pose.position.x,
                                                           next_point_in_vx_frame.pose.position.y])
+            if index == 0:
+                self.last_waypoint_heading_vx_frame = direction_rel
             #Filter out a sector. REP 103 convention. +ve is counterclockwise from vehicle nose.
             if self.min_scan_angle < direction_vx and direction_vx < self.max_scan_angle:
                 if distance_vx > self.acceptance_threshold:
@@ -228,9 +234,11 @@ class Wp_Admin:
         #list of angle increments
         angles = np.linspace(math.pi/2, 0, number_of_points)
         
+        x,y = self.extend_line_from_point((self.vx_x, self.vx_y), self.last_waypoint_heading_vx_frame,self.distance_in_meters)
+        corner_bhvr_points.append((x,y))
         #list of circle points in vx_frame
-        corner_bhvr_points = [(point_of_obstacle[0] + self.distance_in_meters * math.cos(angle), 
-                            point_of_obstacle[1] + self.distance_in_meters * math.sin(angle))
+        corner_bhvr_points = [(point_of_obstacle[0] + self.distance_in_meters * math.cos(angle-np.radians(self.last_waypoint_heading_vx_frame)), 
+                            point_of_obstacle[1] + self.distance_in_meters * math.sin(angle-np.radians(self.last_waypoint_heading_vx_frame)))
                             for angle in angles]
         
         #Tf to odom frame

@@ -145,3 +145,16 @@ def calculate_slope(x_coords:list, y_coords:list):
         beta_1 = 1/beta_1
     #slope, intercept
     return beta_1, beta_0
+
+def angle_difference_radians(angle1, angle2):
+    diff = (angle1 - angle2) % (2 * math.pi)
+    return diff
+
+def sum_angles_radians(*angles):
+    total = sum(angles)
+    if total>math.pi:
+        total = total - 2*math.pi
+    if total< -math.pi:
+        total = total + 2*math.pi
+
+    return total
