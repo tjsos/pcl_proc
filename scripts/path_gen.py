@@ -724,7 +724,8 @@ class PathGen:
         # line_frame_points = reversed(line_frame_points)
         for index, point in enumerate((line_frame_points)):
             #Get distance to all points from vx{L}
-            vehicle_to_point_distance = math.sqrt((self.vx_line_frame[0] - point[0])**2 + (self.vx_line_frame[1] - point[1])**2)
+            # vehicle_to_point_distance = math.sqrt((self.vx_line_frame[0] - point[0])**2 + (self.vx_line_frame[1] - point[1])**2)
+            vehicle_to_point_distance = math.sqrt((point[0] - self.vx_line_frame[0])**2 + (point[1] - self.vx_line_frame[1])**2)
 
             #Get angle to all points
             delta_x = point[0] - self.vx_line_frame[0]
@@ -747,7 +748,7 @@ class PathGen:
                 vehicle_to_point_angle_degree = path_utils.sum_angles_radians(vehicle_to_point_angle,-math.pi)
 
             #Carve out the sector.
-            if -90 < (vehicle_to_point_angle_degree) and (vehicle_to_point_angle_degree) < 90:
+            if -45 < (vehicle_to_point_angle_degree) and (vehicle_to_point_angle_degree) < 45:
                 if vehicle_to_point_distance > 10:
                     valid_distance.append(vehicle_to_point_distance)
                     valid_angle.append(vehicle_to_point_angle)
@@ -759,7 +760,7 @@ class PathGen:
         yaw_component = [angle/self.max_yaw_rate for angle in valid_angle]
         track_component = [angle/self.max_yaw_rate for angle in valid_track]
         
-        angular_component = [(path_utils.angle_difference_radians(ang, track)) for ang, track in zip(yaw_component, track_component)]
+        angular_component = [(path_utils.sum_angles_radians(ang, -track)) for ang, track in zip(yaw_component, track_component)]
 
         # cost = [lin + ang for lin, ang in zip(lin_component, angular_component)]
         cost = [ ang for  ang in angular_component]
@@ -768,6 +769,7 @@ class PathGen:
             #Get the point with min cost.
             best_point = min(cost)
             min_index = cost.index(best_point)
+            print(f"Distance: {valid_distance[min_index]}, Angle of (L): {math.degrees(self.angle_from_e_to_l)}, Angle of point: {math.degrees(valid_angle[min_index])}")
             return valid_point[min_index]
 
         except ValueError:
