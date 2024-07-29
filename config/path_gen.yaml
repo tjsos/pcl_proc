@@ -4,7 +4,7 @@ path_generator:
   costmap_topic: 'move_base/local_costmap/costmap'
   path_topic: 'path'
   distance_to_obstacle_topic: 'path/distance_to_obstacle'
-  debug: true
+  debug: false
 
   canny_min_threshold: 200
   canny_max_threshold: 255

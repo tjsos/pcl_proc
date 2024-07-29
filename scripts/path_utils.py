@@ -46,9 +46,13 @@ def compare_points_with_image(frame:np.array, points_list:list):
     Returns:
         frame: Image Array with points_list vizualised
     """
-    for coordinates in points_list:
+    for index, coordinates in enumerate(points_list):
         center = tuple(coordinates)
-        cv2.circle(frame, center, 1, 100, 1)
+        
+        if index == 0:
+            cv2.circle(frame, center, 1, 255, 1)
+        else:
+            cv2.circle(frame, center, 1, 100, 1)
     return frame
 
 #Rotation Matrix
@@ -115,20 +119,6 @@ def calculate_slope(x_coords:list, y_coords:list):
     if len(x_coords) != len(y_coords):
         raise ValueError("The number of x and y coordinates must be the same.")
     
-    # n = len(x_coords)
-    # sum_x = sum(x_coords)
-    # sum_y = sum(y_coords)
-    # sum_xy = sum(x * y for x, y in zip(x_coords, y_coords))
-    # sum_x_squared = sum(x ** 2 for x in x_coords)
-    # # Calculate the slope using the least squares formula
-    # numerator = n * sum_xy - sum_x * sum_y
-    # denominator = n * sum_x_squared - sum_x ** 2
-    
-    # if denominator == 0:
-    #     raise ValueError("Denominator is zero, cannot calculate slope. Check the input points.")
-    
-    # slope = numerator / denominator
-    
     s_xx = sum([(x - np.mean(x_coords))**2 for x in x_coords])
     s_yy = sum([(y - np.mean(y_coords))**2 for y in y_coords])
     s_xy = sum([(x - np.mean(x_coords))*(y - np.mean(y_coords)) for x,y in zip(x_coords,y_coords)])
@@ -143,12 +133,8 @@ def calculate_slope(x_coords:list, y_coords:list):
         #Get it in relative to x
         beta_0 = beta_0/beta_1
         beta_1 = 1/beta_1
-    #slope, intercept
+        #slope, intercept
     return beta_1, beta_0
-
-def angle_difference_radians(angle1, angle2):
-    diff = (angle1 - angle2) % (2 * math.pi)
-    return diff
 
 def sum_angles_radians(*angles):
     total = sum(angles)

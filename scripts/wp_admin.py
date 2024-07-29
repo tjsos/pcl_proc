@@ -102,15 +102,15 @@ class Wp_Admin:
         self.check_state()
         if len(msg.poses) > 10:
             #If valid path
-            goal = self.find_point_to_follow(msg)  
+            # goal = self.find_point_to_follow(msg)  
             if self.state == "survey_3d":
-                if goal != None:
+                # if goal != None:
                     x_c = self.x #goal.pose.position.x
                     y_c = self.y #goal.pose.position.y
                     wp.polygon.points.append(Point32(x_c ,y_c, self.depth))
                     self.pub_update.publish(wp)
 
-            elif self.state == "start":
+            elif self.state == "start":     
                 #No valid points, corner bhvr
                 self.no_path_bhvr(wp)
                 
@@ -234,11 +234,11 @@ class Wp_Admin:
         #list of angle increments
         angles = np.linspace(math.pi/2, 0, number_of_points)
         
-        x,y = self.extend_line_from_point((self.vx_x, self.vx_y), self.last_waypoint_heading_vx_frame,self.distance_in_meters)
-        corner_bhvr_points.append((x,y))
+        # x,y = self.extend_line_from_point((self.vx_x, self.vx_y), self.last_waypoint_heading_vx_frame,self.distance_in_meters)
+        # corner_bhvr_points.append((x,y))
         #list of circle points in vx_frame
-        corner_bhvr_points = [(point_of_obstacle[0] + self.distance_in_meters * math.cos(angle-np.radians(self.last_waypoint_heading_vx_frame)), 
-                            point_of_obstacle[1] + self.distance_in_meters * math.sin(angle-np.radians(self.last_waypoint_heading_vx_frame)))
+        corner_bhvr_points = [(point_of_obstacle[0] + self.distance_in_meters * math.cos(angle), 
+                            point_of_obstacle[1] + self.distance_in_meters * math.sin(angle))
                             for angle in angles]
         
         #Tf to odom frame

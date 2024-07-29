@@ -391,9 +391,8 @@ class PathGen:
                 
                 if self.debug:
                     edge_frame_debug = np.zeros((self.height, self.width,3), dtype=np.uint8)
+                    lin_regress_debug = [((self.slope) * x ) for x in x_edge_frame_list]
 
-                    lin_regress_debug = [round((self.slope) * x  + intercept) for x in x_edge_frame_list]
-        
                     for cords in zip(x_edge_frame_list,y_edge_frame_list ):
                         cords = list(cords)
                         cords[0] = cords[0]+self.width//2
@@ -405,7 +404,7 @@ class PathGen:
                     for cords in zip(x_edge_frame_list, lin_regress_debug):
                         cords = list(cords)
                         cords[0] = cords[0]+self.width//2
-                        cords[1] = cords[1]+self.height//2
+                        cords[1] = round(cords[1]+self.height//2)
                         center = tuple(cords)
                         cv2.circle(edge_frame_debug, center, 1, (0,0,255), 1)
 
@@ -478,6 +477,7 @@ class PathGen:
                 
                 ##LINE FRAME->EDGE_FRAME
                 lingres  = [[x, y] for x, y in zip(x_model, y_model)]
+                #Cost 
                 best_point = self.get_best_point(lingres)
 
                 x_edge_frame_list, y_edge_frame_list = path_utils.rotate_points(lingres, -self.angle_from_e_to_l)
@@ -619,10 +619,11 @@ class PathGen:
         Args:
             shifted_coordinates: List of fitted points in odom frame
         """
-        if shifted_coordinates!=None:
+        if shifted_coordinates!= -1 and shifted_coordinates != None:
             path = Path()
-            path.header.frame_id = self.frame#"alpha_rise/base_link"
+            path.header.frame_id = self.frame
             path.header.stamp =  self.time
+        
             for index, cords in enumerate(shifted_coordinates):
                 pose_stamped = PoseStamped()
                 pose_stamped.header.frame_id = self.frame#
@@ -724,7 +725,6 @@ class PathGen:
         # line_frame_points = reversed(line_frame_points)
         for index, point in enumerate((line_frame_points)):
             #Get distance to all points from vx{L}
-            # vehicle_to_point_distance = math.sqrt((self.vx_line_frame[0] - point[0])**2 + (self.vx_line_frame[1] - point[1])**2)
             vehicle_to_point_distance = math.sqrt((point[0] - self.vx_line_frame[0])**2 + (point[1] - self.vx_line_frame[1])**2)
 
             #Get angle to all points
@@ -732,8 +732,6 @@ class PathGen:
             delta_y = point[1] - self.vx_line_frame[1]
 
             vehicle_to_point_angle = math.atan2(delta_y, delta_x)
-
-            vehicle_to_point_angle_degree = math.degrees(vehicle_to_point_angle)    
     
             #Get track angle. Len() returns natural numbers. Index starts from 0.
             if index < len(line_frame_points) -2:
@@ -743,13 +741,15 @@ class PathGen:
             else:
                 track_angle = 0
             
-            #If +ve angle, add 180
-            if self.angle_from_e_to_l > 0:
-                vehicle_to_point_angle_degree = path_utils.sum_angles_radians(vehicle_to_point_angle,-math.pi)
+            #If +ve angle, add -180 [[x],[y]]
+            if self.vx_line_frame[1][0] > 0.0:
+                vehicle_to_point_angle = path_utils.sum_angles_radians(vehicle_to_point_angle, -math.pi)
+                # print(vehicle_to_point_angle)
 
+            vehicle_to_point_angle_degree = math.degrees(vehicle_to_point_angle)    
             #Carve out the sector.
             if -90 < (vehicle_to_point_angle_degree) and (vehicle_to_point_angle_degree) < 90:
-                if vehicle_to_point_distance > 10:
+                if vehicle_to_point_distance > 15:
                     valid_distance.append(vehicle_to_point_distance)
                     valid_angle.append(vehicle_to_point_angle)
                     valid_track.append(track_angle)
@@ -757,19 +757,14 @@ class PathGen:
 
         #Get Cost.
         lin_component = [distance/self.max_surge for distance in valid_distance]
-        yaw_component = [angle/self.max_yaw_rate for angle in valid_angle]
-        track_component = [angle/self.max_yaw_rate for angle in valid_track]
-        
-        angular_component = [(path_utils.sum_angles_radians(ang, -track)) for ang, track in zip(yaw_component, track_component)]
-
-        # cost = [lin + ang for lin, ang in zip(lin_component, angular_component)]
-        cost = [ ang for  ang in angular_component]
+        yaw_component = [abs(path_utils.sum_angles_radians(track, -angle))/self.max_yaw_rate for angle, track in zip(valid_angle,valid_track)]
+        cost = [lin + ang for lin, ang in zip(lin_component, yaw_component)]
         
         try:
             #Get the point with min cost.
             best_point = min(cost)
             min_index = cost.index(best_point)
-            print(f"Distance: {valid_distance[min_index]}, Angle of (L): {math.degrees(self.angle_from_e_to_l)}, Angle of point: {math.degrees(valid_angle[min_index])}")
+            # print(f"Distance: {valid_distance[min_index]}, Angle of (L): {math.degrees(self.angle_from_e_to_l)}, Angle of point: {math.degrees(valid_angle[min_index])}")
             return valid_point[min_index]
 
         except ValueError:
