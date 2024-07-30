@@ -9,7 +9,7 @@ import rospy
 import tf2_ros
 import tf.transformations as tf_transform
 from nav_msgs.msg import OccupancyGrid, Path
-from geometry_msgs.msg import PoseStamped, TransformStamped
+from geometry_msgs.msg import PoseStamped, TransformStamped, Point
 from std_msgs.msg import Float32
 import numpy as np
 import cv2
@@ -29,22 +29,29 @@ class PathGen:
 
         costmap_topic = rospy.get_param("path_generator/costmap_topic")
         path_topic = rospy.get_param("path_generator/path_topic")
-        obstacle_distance_topic = rospy.get_param("path_generator/distance_to_obstacle_topic")
 
         self.canny_min = rospy.get_param("path_generator/canny_min_threshold",200)
         self.canny_max = rospy.get_param("path_generator/canny_max_threshold",255)
 
         self.distance_in_meters = rospy.get_param("path_generator/standoff_distance_meters",15)
         self.n_points = rospy.get_param("path_generator/points_to_sample_from_curve",20)
+
+        self.min_scan_angle = rospy.get_param("path_generator/min_scan_angle",-90)
+        self.max_scan_angle = rospy.get_param("path_generator/max_scan_angle",90)
+        self.distance_constraint = rospy.get_param("path_generator/distance_constraint",90)
         
+        self.max_surge = rospy.get_param("helm/path_3d/surge_velocity")
+        self.max_yaw_rate = rospy.get_param("helm/teleop/max_yaw_rate")
+
         #Costmap subscriber.
         rospy.Subscriber(costmap_topic, OccupancyGrid, self.mapCB)
         
         #Path Publisher
         self.pub_path = rospy.Publisher(path_topic, Path, queue_size=1)
+        self.best_point_pub = rospy.Publisher(path_topic + "/best_point", Point, queue_size=1)
 
         #Vx_frame image publisher
-        self.obstacle_distance_pub = rospy.Publisher(obstacle_distance_topic, Float32, queue_size=1)
+        self.obstacle_distance_pub = rospy.Publisher(path_topic + "/distance_to_obstacle", Float32, queue_size=1)
         
         #TF Buffer and Listener
         self.buffer = tf2_ros.Buffer()
@@ -52,11 +59,8 @@ class PathGen:
 
         #TF BroadCaster
         self.br = tf2_ros.TransformBroadcaster()
-        
-        #path placeholder
-        self.poses = []
 
-        self.start_time = 0
+        self.start_time = time.time()
         
     def mapCB(self, message:OccupancyGrid):
         """
@@ -94,7 +98,7 @@ class PathGen:
         data = np.array(data).reshape(self.width,self.height)
         data = data.astype(np.uint8)
 
-        # Corrected for Costmap FRAME -> Image frame.
+        # Corrected for Costmap FRAME -> Odom frame.
         data = cv2.flip(data, 1)  
         data = cv2.rotate(data, cv2.ROTATE_90_CLOCKWISE)
 
@@ -323,7 +327,7 @@ class PathGen:
 
             return image, cartesian_coordinates
         else:
-            return [], []
+            return [],[]
     
     def edge_shifting(self, vx_frame:np.array):
 
@@ -387,9 +391,8 @@ class PathGen:
                 
                 if self.debug:
                     edge_frame_debug = np.zeros((self.height, self.width,3), dtype=np.uint8)
+                    lin_regress_debug = [((self.slope) * x ) for x in x_edge_frame_list]
 
-                    lin_regress_debug = [round((self.slope) * x  + intercept) for x in x_edge_frame_list]
-        
                     for cords in zip(x_edge_frame_list,y_edge_frame_list ):
                         cords = list(cords)
                         cords[0] = cords[0]+self.width//2
@@ -401,7 +404,7 @@ class PathGen:
                     for cords in zip(x_edge_frame_list, lin_regress_debug):
                         cords = list(cords)
                         cords[0] = cords[0]+self.width//2
-                        cords[1] = cords[1]+self.height//2
+                        cords[1] = round(cords[1]+self.height//2)
                         center = tuple(cords)
                         cv2.circle(edge_frame_debug, center, 1, (0,0,255), 1)
 
@@ -409,13 +412,13 @@ class PathGen:
                     cv2.circle(edge_frame_debug, (self.width//2, 
                                                 self.height//2), 1, (0,255,0), 2)
                     
-                lingres  = [[x, y] for x, y in zip(x_edge_frame_list, y_edge_frame_list)]
+                edge_frame  = [[x, y] for x, y in zip(x_edge_frame_list, y_edge_frame_list)]
 
                 ##EDGE_FRAME -> LINE_FRAME
-                x_line_frame_list, y_line_frame_list = path_utils.rotate_points(lingres, self.angle_from_e_to_l)
+                x_line_frame_list, y_line_frame_list = path_utils.rotate_points(edge_frame, self.angle_from_e_to_l)
                 #Vehicle cords in Line Frame
                 vx_x_line_frame, vx_y_line_frame = path_utils.rotate_points([[vx_x_edge_frame, vx_y_edge_frame]], self.angle_from_e_to_l)
-
+                self.vx_line_frame = [vx_x_line_frame, vx_y_line_frame]
                 """        
                 ------>xCOSTMAP IMAGE
                 |         ->x LINE FRAME    
@@ -424,7 +427,7 @@ class PathGen:
                 yV
                 """
 
-                #Insert standoff distance
+                #Insert standoff distance depending on the Y_cord of the vehicle in {L}
                 distance_in_cells = self.distance_in_meters*1/self.resolution
                 
                 if round(vx_y_line_frame[0]) > 0.0:
@@ -468,13 +471,17 @@ class PathGen:
                 # print(p_opt)
                 a_opt, b_opt, c_opt = p_opt
                 
-                ##GET CURVE
+                ##GET CURVE. INdex starts from min(x)
                 x_model = np.linspace(min(x_coordinates), max(x_coordinates), self.n_points)
                 y_model = path_utils.model_f(x_model, a_opt, b_opt, c_opt)
                 
                 ##LINE FRAME->EDGE_FRAME
                 lingres  = [[x, y] for x, y in zip(x_model, y_model)]
+                #Cost 
+                best_point = self.get_best_point(lingres)
+
                 x_edge_frame_list, y_edge_frame_list = path_utils.rotate_points(lingres, -self.angle_from_e_to_l)
+                x, y = path_utils.rotate_points([best_point], -self.angle_from_e_to_l)
                 """        
                 ------>xCOSTMAP IMAGE
                 |         ->x PATH FRAME
@@ -490,6 +497,11 @@ class PathGen:
                     shifted_x = coords[0] + self.new_origin[0]
                     shifted_y = coords[1] + self.new_origin[1]
                     vx_frame_model.append([round(shifted_x), round(shifted_y)])
+
+                self.best_point = [round(x[0] + self.new_origin[0]), 
+                                   round(y[0] + self.new_origin[1])]
+                
+                
                 """        
                 ------>xCOSTMAP IMAGE
                 |
@@ -502,8 +514,8 @@ class PathGen:
                 return vx_frame_model
 
             except TypeError:
-                print("No solution found")
-                return -1
+                print(f"[WARN]: No solution of curve found [{time.time()}]")
+                return None
         else:
             return None
         
@@ -523,6 +535,8 @@ class PathGen:
                 return -1
             else:
                 cartesian_coordinates = [(x - self.height//2, self.width//2 - y) for x, y in cart_list]
+                self.best_point = [self.best_point[0] - self.height//2, self.width//2 - self.best_point[1]]
+                
                 """
                 ------>x COSTMAP IMAGE
                 |
@@ -533,6 +547,7 @@ class PathGen:
                 yV
                 """
                 cartesian_coordinates = [(-y,-x) for x, y in cartesian_coordinates]
+                self.best_point = [-self.best_point[1], -self.best_point[0]]
                 """
                 ------>x COSTMAP IMAGE
                 |
@@ -545,6 +560,7 @@ class PathGen:
                 """
                 # Step 2: Convert shifted Cartesian coordinates to polar coordinates
                 polar_coordinates = [[np.sqrt(x**2 + y**2), (np.arctan2(y, x))] for x, y in cartesian_coordinates]
+                self.best_point = [np.sqrt(self.best_point[0]**2 + self.best_point[1]**2), np.arctan2(self.best_point[1], self.best_point[0])]
                 
                 vx_theta = self.vx_yaw
                 
@@ -553,9 +569,11 @@ class PathGen:
                 # # Discout vx_yaw
                 for points in polar_coordinates:
                     points[1] = (points[1] + np.float64(vx_theta))
-        
+                
+                self.best_point[1] = self.best_point[1] + np.float64(vx_theta)
                 # Convert to Cartesian (x,y)
                 cartesian_coordinates = [[round(r * np.cos(theta)), round(r * np.sin(theta))] for r, theta in polar_coordinates]
+                self.best_point = [round(self.best_point[0] * np.cos(self.best_point[1])),round(self.best_point[0] * np.sin(self.best_point[1]))]
                 """
                 ------>x COSTMAP IMAGE
                 |
@@ -567,6 +585,7 @@ class PathGen:
                 yV
                 """
                 cartesian_coordinates = [(-y,-x) for x, y in cartesian_coordinates]
+                self.best_point = [-self.best_point[1], -self.best_point[0]]
                 """
                 ------>x COSTMAP IMAGE
                 |
@@ -578,6 +597,7 @@ class PathGen:
                 """
                 # Shift back to Image frame
                 cartesian_coordinates = [[int(x+self.width//2),int(self.height//2 - y)] for x, y in cartesian_coordinates]
+                self.best_point = [int(self.best_point[0] + self.width//2), int(self.height//2 - self.best_point[1])]
                 """        
                 ------>xCOSTMAP IMAGE
                 |
@@ -599,10 +619,11 @@ class PathGen:
         Args:
             shifted_coordinates: List of fitted points in odom frame
         """
-        if shifted_coordinates!=None:
+        if shifted_coordinates!= None:
             path = Path()
-            path.header.frame_id = self.frame#"alpha_rise/base_link"
+            path.header.frame_id = self.frame
             path.header.stamp =  self.time
+        
             for index, cords in enumerate(shifted_coordinates):
                 pose_stamped = PoseStamped()
                 pose_stamped.header.frame_id = self.frame#
@@ -621,11 +642,11 @@ class PathGen:
                 yV
                 """
                 x = -cords[1]
-                y = -cords[0] 
+                y = -cords[0]
 
                 x = ((self.width//2 + x) * self.resolution) + self.vx_x
                 y = ((self.height//2 + y)* self.resolution ) + self.vx_y
-
+                
                 pose_stamped.pose.position.x = x#self.height//4 - cords[1] * self.resolution
                 pose_stamped.pose.position.y = y#self.height//4 - cords[0] * self.resolution 
                 pose_stamped.pose.orientation.x = 0
@@ -635,9 +656,16 @@ class PathGen:
                 path.poses.append(pose_stamped)
             self.pub_path.publish(path)
 
+            #Pub Best Point
+            self.best_point = [-self.best_point[1], -self.best_point[0]]
+            self.best_point = [((self.width//2 + self.best_point[0]) * self.resolution) + self.vx_x,
+                                   ((self.height//2 + self.best_point[1]) * self.resolution) + self.vx_y]
+            
+            self.best_point_pub.publish(Point(self.best_point[0], self.best_point[1], 0))
+
         else:
             path = Path()
-            path.header.frame_id = self.frame#"alpha_rise/base_link"
+            path.header.frame_id = self.frame
             path.header.stamp =  self.time
             pose_stamped = PoseStamped()
             pose_stamped.header.frame_id = self.frame#
@@ -687,7 +715,58 @@ class PathGen:
                 return shortest_point_cartesian
         else:
             return -1
+
+    def get_best_point(self, line_frame_points):
+        #Cost calc in {L}
+        valid_point, valid_distance, valid_angle, valid_track = [],[],[], []
+        for index, point in enumerate((line_frame_points)):
+            #Get distance to all points from vx{L}
+            vehicle_to_point_distance = math.sqrt((point[0] - self.vx_line_frame[0])**2 + (point[1] - self.vx_line_frame[1])**2)
+
+            #Get angle to all points from vx in{L}
+            delta_x = point[0] - self.vx_line_frame[0]
+            delta_y = point[1] - self.vx_line_frame[1]
+
+            vehicle_to_point_angle = math.atan2(delta_y, delta_x)
+            #If vx Y in {L} is +ve, add -180 
+            # [[x],[y]]
+            if self.vx_line_frame[1][0] > 0.0:
+                vehicle_to_point_angle = path_utils.sum_angles_radians(vehicle_to_point_angle, -math.pi)
+
+            #Get track angle in {L}. Len() returns natural numbers. Index starts from 0.
+            if index < len(line_frame_points) -2:
+                next_point = line_frame_points[index+1]
+                track_angle = math.atan2((next_point[1] - point[1]), 
+                                         (next_point[0] - point[0]))
+            else:
+                track_angle = 0
+            
+            vehicle_to_point_angle_degree = math.degrees(vehicle_to_point_angle)    
+            #Heading constraint.
+            if self.min_scan_angle < (vehicle_to_point_angle_degree) and (vehicle_to_point_angle_degree) < self.max_scan_angle:
+                #Distance constraint.
+                if vehicle_to_point_distance > self.distance_constraint * 1/self.resolution:
+                    valid_distance.append(vehicle_to_point_distance)
+                    valid_angle.append(vehicle_to_point_angle)
+                    valid_track.append(track_angle)
+                    valid_point.append(point)
+
+        #Get Cost.
+        lin_component = [distance/self.max_surge for distance in valid_distance]
+        yaw_component = [abs(path_utils.sum_angles_radians(track, -angle))/self.max_yaw_rate for angle, track in zip(valid_angle,valid_track)]
+        cost = [lin + ang for lin, ang in zip(lin_component, yaw_component)]
         
+        try:
+            #Get the point with min cost.
+            best_point = min(cost)
+            min_index = cost.index(best_point)
+            # print(f"Distance: {valid_distance[min_index]}, Angle of (L): {math.degrees(self.angle_from_e_to_l)}, Angle of point: {math.degrees(valid_angle[min_index])}")
+            return valid_point[min_index]
+
+        except ValueError:
+            # print("No valid point")
+            return -1
+
 if __name__ == "__main__":
     rospy.init_node('path_node')
     PathGen()
