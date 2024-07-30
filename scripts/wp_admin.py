@@ -22,11 +22,10 @@ class Wp_Admin:
     def __init__(self):
         #Get Params
         self.distance_in_meters = rospy.get_param("path_generator/standoff_distance_meters",15)
-        path_topic = rospy.get_param("path_generator/path_topic")
         update_waypoint_topic = rospy.get_param("waypoint_admin/update_waypoint_topic")
-        append_waypoint_topic = rospy.get_param("waypoint_admin/append_waypoint_topic")
-        state_topic = rospy.get_param("waypoint_admin/state_topic")
-        distance_to_obstacle_topic = rospy.get_param("path_generator/distance_to_obstacle_topic")
+        path_topic = rospy.get_param("path_generator/path_topic")
+        state_topic = path_topic + '/state'
+        distance_to_obstacle_topic = path_topic + '/distance_to_obstacle'
 
         self.get_state_service = rospy.get_param("waypoint_admin/get_state_service", "/alpha_rise/helm/get_state")
         self.change_state_service = rospy.get_param("waypoint_admin/change_state_service", "/alpha_rise/helm/change_state")
@@ -34,16 +33,10 @@ class Wp_Admin:
 
         #Waypoint selection param
         self.update_rate = rospy.get_param("waypoint_admin/check_state_update_rate")
-        self.min_scan_angle = rospy.get_param("waypoint_admin/min_scan_angle")
-        self.max_scan_angle = rospy.get_param("waypoint_admin/max_scan_angle")
-        self.acceptance_threshold = rospy.get_param("waypoint_admin/acceptance_threshold")
         self.depth = rospy.get_param("waypoint_admin/z_value")
-        self.max_surge_velocity = rospy.get_param("helm/path_3d/surge_velocity")
-        self.max_yaw_rate = rospy.get_param("helm/teleop/max_yaw_rate")
         
         #Declare Pubs
         self.pub_update = rospy.Publisher(update_waypoint_topic, PolygonStamped, queue_size=1)
-        self.pub_append = rospy.Publisher(append_waypoint_topic, PolygonStamped, queue_size=1)
         self.pub_state = rospy.Publisher(state_topic, Float32, queue_size=1)
         
         #Declare Subs
@@ -52,21 +45,22 @@ class Wp_Admin:
         rospy.Subscriber(path_topic +"/best_point", Point, callback=self.point_cB)
 
         #Declare variables
-        self.vx_yaw = 0
         self.start_time = time.time()
         self.state = None
         self.distance_to_obstacle = None
-        self.ice_reacquisition = False
 
         self.tf_buffer = tf2_ros.Buffer()
-        self.listener = tf2_ros.TransformListener(self.tf_buffer)
+        listener = tf2_ros.TransformListener(self.tf_buffer)
 
         self.node_name = rospy.get_name()
     
     def point_cB(self, msg):
+        #Get the best point
         self.x, self.y, z = msg.x, msg.y, msg.z
 
     def distance_cB(self, msg):
+        #Depending on the waypoints in the Helm, 
+        #One can determine if in Following (0) or IceReac (1)
         self.distance_to_obstacle = msg.data
         
         get_waypoint_client = rospy.ServiceProxy(self.get_waypoint_service, GetWaypoints)
@@ -101,17 +95,14 @@ class Wp_Admin:
         #Check state whether survey_3d or start
         self.check_state()
         if len(msg.poses) > 10:
-            #If valid path
-            # goal = self.find_point_to_follow(msg)  
             if self.state == "survey_3d":
-                # if goal != None:
-                    x_c = self.x #goal.pose.position.x
-                    y_c = self.y #goal.pose.position.y
-                    wp.polygon.points.append(Point32(x_c ,y_c, self.depth))
-                    self.pub_update.publish(wp)
+                x_c = self.x 
+                y_c = self.y
+                print("[INFO]: Following Mode", time.time())
+                wp.polygon.points.append(Point32(x_c ,y_c, self.depth))
+                self.pub_update.publish(wp)
 
             elif self.state == "start":     
-                #No valid points, corner bhvr
                 self.no_path_bhvr(wp)
                 
         else:
@@ -129,7 +120,7 @@ class Wp_Admin:
             #Append the waypoints
             for i in range(len(corner_bhvr_points)):
                 wp.polygon.points.append(Point32(corner_bhvr_points[i].point.x ,corner_bhvr_points[i].point.y, self.depth))
-                
+            print("[INFO]: Iceberg Reacquisition Mode", time.time())
             self.pub_update.publish(wp)
 
     def check_state(self):
@@ -151,77 +142,6 @@ class Wp_Admin:
         y2 = point[1] + length * math.sin(angle_radians)
 
         return (x2, y2)
-    
-    def find_point_to_follow(self, path_msg):
-        #Init lists
-        valid_pose = []
-        valid_xy = []
-        valid_polar = []
-        relative_yaw = []
-
-        next_point_in_vx_frame = PoseStamped()
-        # Iterate through the poses in the path
-        for index, pose_stamped in enumerate(path_msg.poses):
-            #Transform the points in vx frame
-            point_in_vx_frame = tf2_geometry_msgs.do_transform_pose(path_msg.poses[index], self.odom_to_base_tf)
-            #Take the next points. If it is last point.
-            if index < len(path_msg.poses)-2:
-                next_point_in_vx_frame = tf2_geometry_msgs.do_transform_pose(path_msg.poses[index+1], self.odom_to_base_tf)
-            else:
-                next_point_in_vx_frame.pose.position.x = point_in_vx_frame.pose.position.x
-                next_point_in_vx_frame.pose.position.y = point_in_vx_frame.pose.position.y
-
-            #Get distance and bearing to the point from the vehicle
-            distance_vx,direction_vx,direction_rel = self.get_vector([0,0], [point_in_vx_frame.pose.position.x,
-                                                         point_in_vx_frame.pose.position.y],
-                                                         
-                                                         [next_point_in_vx_frame.pose.position.x,
-                                                          next_point_in_vx_frame.pose.position.y])
-            if index == 0:
-                self.last_waypoint_heading_vx_frame = direction_rel
-            #Filter out a sector. REP 103 convention. +ve is counterclockwise from vehicle nose.
-            if self.min_scan_angle < direction_vx and direction_vx < self.max_scan_angle:
-                if distance_vx > self.acceptance_threshold:
-                    #Gather pose_msgs, xy, and distances of such points
-                    valid_pose.append(pose_stamped)
-                    valid_xy.append([point_in_vx_frame.pose.position.x,
-                                    point_in_vx_frame.pose.position.y])
-                    valid_polar.append(distance_vx)
-                    relative_yaw.append([direction_vx, direction_rel])
-        
-        valid_polar_norm_velocity = [distance_vx/self.max_surge_velocity for distance_vx in valid_polar]
-        relative_yaw_norm_velocity = [abs(np.radians(direction_vx)/self.max_yaw_rate) + abs(np.radians(direction_rel)/self.max_yaw_rate) for direction_vx, direction_rel in relative_yaw]
-
-        time_for_point = [linx_time + abs(angz_time) for linx_time, angz_time in zip(valid_polar_norm_velocity, relative_yaw_norm_velocity)]
-        try:
-            closest = min(time_for_point)
-            min_index = time_for_point.index(closest)
-            print("BEST POINT BHVR", time.time())
-            return valid_pose[min_index]
-
-        except ValueError:
-            print("No valid point", time.time())
-            return None
-
-    def get_vector(self, point1, point2, point3):
-        """
-        Calculate the Euclidean distance between two points.
-        """
-        distance = math.sqrt((point2[0] - point1[0]) ** 2 + (point2[1] - point1[1]) ** 2)
-
-        # Get angle between vehicle and wp in odom frame
-        delta_x = point2[0] - point1[0]
-        delta_y = point2[1] - point1[1]
-        theta_radians = math.atan2(delta_y, delta_x)
-        direction_from_vx = math.degrees(theta_radians)
-
-        delta_x_relative = point3[0] - point2[0]
-        delta_y_relative = point3[1] - point2[1]
-        theta_radians_relative = math.atan2(delta_y_relative, delta_x_relative)
-        direction_relative = math.degrees(theta_radians_relative)
-
-
-        return distance, direction_from_vx, direction_relative
 
     def corner_behaviour(self, number_of_points):
         #init lists
@@ -233,9 +153,7 @@ class Wp_Admin:
         
         #list of angle increments
         angles = np.linspace(math.pi/2, 0, number_of_points)
-        
-        # x,y = self.extend_line_from_point((self.vx_x, self.vx_y), self.last_waypoint_heading_vx_frame,self.distance_in_meters)
-        # corner_bhvr_points.append((x,y))
+
         #list of circle points in vx_frame
         corner_bhvr_points = [(point_of_obstacle[0] + self.distance_in_meters * math.cos(angle), 
                             point_of_obstacle[1] + self.distance_in_meters * math.sin(angle))

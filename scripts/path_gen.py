@@ -29,13 +29,16 @@ class PathGen:
 
         costmap_topic = rospy.get_param("path_generator/costmap_topic")
         path_topic = rospy.get_param("path_generator/path_topic")
-        obstacle_distance_topic = rospy.get_param("path_generator/distance_to_obstacle_topic")
 
         self.canny_min = rospy.get_param("path_generator/canny_min_threshold",200)
         self.canny_max = rospy.get_param("path_generator/canny_max_threshold",255)
 
         self.distance_in_meters = rospy.get_param("path_generator/standoff_distance_meters",15)
         self.n_points = rospy.get_param("path_generator/points_to_sample_from_curve",20)
+
+        self.min_scan_angle = rospy.get_param("path_generator/min_scan_angle",-90)
+        self.max_scan_angle = rospy.get_param("path_generator/max_scan_angle",90)
+        self.distance_constraint = rospy.get_param("path_generator/distance_constraint",90)
         
         self.max_surge = rospy.get_param("helm/path_3d/surge_velocity")
         self.max_yaw_rate = rospy.get_param("helm/teleop/max_yaw_rate")
@@ -48,7 +51,7 @@ class PathGen:
         self.best_point_pub = rospy.Publisher(path_topic + "/best_point", Point, queue_size=1)
 
         #Vx_frame image publisher
-        self.obstacle_distance_pub = rospy.Publisher(obstacle_distance_topic, Float32, queue_size=1)
+        self.obstacle_distance_pub = rospy.Publisher(path_topic + "/distance_to_obstacle", Float32, queue_size=1)
         
         #TF Buffer and Listener
         self.buffer = tf2_ros.Buffer()
@@ -56,11 +59,8 @@ class PathGen:
 
         #TF BroadCaster
         self.br = tf2_ros.TransformBroadcaster()
-        
-        #path placeholder
-        self.poses = []
 
-        self.start_time = 0
+        self.start_time = time.time()
         
     def mapCB(self, message:OccupancyGrid):
         """
@@ -98,7 +98,7 @@ class PathGen:
         data = np.array(data).reshape(self.width,self.height)
         data = data.astype(np.uint8)
 
-        # Corrected for Costmap FRAME -> Image frame.
+        # Corrected for Costmap FRAME -> Odom frame.
         data = cv2.flip(data, 1)  
         data = cv2.rotate(data, cv2.ROTATE_90_CLOCKWISE)
 
@@ -327,7 +327,7 @@ class PathGen:
 
             return image, cartesian_coordinates
         else:
-            return [], []
+            return [],[]
     
     def edge_shifting(self, vx_frame:np.array):
 
@@ -412,10 +412,10 @@ class PathGen:
                     cv2.circle(edge_frame_debug, (self.width//2, 
                                                 self.height//2), 1, (0,255,0), 2)
                     
-                lingres  = [[x, y] for x, y in zip(x_edge_frame_list, y_edge_frame_list)]
+                edge_frame  = [[x, y] for x, y in zip(x_edge_frame_list, y_edge_frame_list)]
 
                 ##EDGE_FRAME -> LINE_FRAME
-                x_line_frame_list, y_line_frame_list = path_utils.rotate_points(lingres, self.angle_from_e_to_l)
+                x_line_frame_list, y_line_frame_list = path_utils.rotate_points(edge_frame, self.angle_from_e_to_l)
                 #Vehicle cords in Line Frame
                 vx_x_line_frame, vx_y_line_frame = path_utils.rotate_points([[vx_x_edge_frame, vx_y_edge_frame]], self.angle_from_e_to_l)
                 self.vx_line_frame = [vx_x_line_frame, vx_y_line_frame]
@@ -427,7 +427,7 @@ class PathGen:
                 yV
                 """
 
-                #Insert standoff distance
+                #Insert standoff distance depending on the Y_cord of the vehicle in {L}
                 distance_in_cells = self.distance_in_meters*1/self.resolution
                 
                 if round(vx_y_line_frame[0]) > 0.0:
@@ -471,7 +471,7 @@ class PathGen:
                 # print(p_opt)
                 a_opt, b_opt, c_opt = p_opt
                 
-                ##GET CURVE
+                ##GET CURVE. INdex starts from min(x)
                 x_model = np.linspace(min(x_coordinates), max(x_coordinates), self.n_points)
                 y_model = path_utils.model_f(x_model, a_opt, b_opt, c_opt)
                 
@@ -514,8 +514,8 @@ class PathGen:
                 return vx_frame_model
 
             except TypeError:
-                print("No solution found")
-                return -1
+                print(f"[WARN]: No solution of curve found [{time.time()}]")
+                return None
         else:
             return None
         
@@ -619,7 +619,7 @@ class PathGen:
         Args:
             shifted_coordinates: List of fitted points in odom frame
         """
-        if shifted_coordinates!= -1 and shifted_coordinates != None:
+        if shifted_coordinates!= None:
             path = Path()
             path.header.frame_id = self.frame
             path.header.stamp =  self.time
@@ -656,20 +656,16 @@ class PathGen:
                 path.poses.append(pose_stamped)
             self.pub_path.publish(path)
 
+            #Pub Best Point
             self.best_point = [-self.best_point[1], -self.best_point[0]]
             self.best_point = [((self.width//2 + self.best_point[0]) * self.resolution) + self.vx_x,
                                    ((self.height//2 + self.best_point[1]) * self.resolution) + self.vx_y]
             
-                
-
-            # best_x = path.poses[best_index].pose.position.x
-            # best_y = path.poses[best_index].pose.position.y
-
             self.best_point_pub.publish(Point(self.best_point[0], self.best_point[1], 0))
 
         else:
             path = Path()
-            path.header.frame_id = self.frame#"alpha_rise/base_link"
+            path.header.frame_id = self.frame
             path.header.stamp =  self.time
             pose_stamped = PoseStamped()
             pose_stamped.header.frame_id = self.frame#
@@ -721,19 +717,23 @@ class PathGen:
             return -1
 
     def get_best_point(self, line_frame_points):
+        #Cost calc in {L}
         valid_point, valid_distance, valid_angle, valid_track = [],[],[], []
-        # line_frame_points = reversed(line_frame_points)
         for index, point in enumerate((line_frame_points)):
             #Get distance to all points from vx{L}
             vehicle_to_point_distance = math.sqrt((point[0] - self.vx_line_frame[0])**2 + (point[1] - self.vx_line_frame[1])**2)
 
-            #Get angle to all points
+            #Get angle to all points from vx in{L}
             delta_x = point[0] - self.vx_line_frame[0]
             delta_y = point[1] - self.vx_line_frame[1]
 
             vehicle_to_point_angle = math.atan2(delta_y, delta_x)
-    
-            #Get track angle. Len() returns natural numbers. Index starts from 0.
+            #If vx Y in {L} is +ve, add -180 
+            # [[x],[y]]
+            if self.vx_line_frame[1][0] > 0.0:
+                vehicle_to_point_angle = path_utils.sum_angles_radians(vehicle_to_point_angle, -math.pi)
+
+            #Get track angle in {L}. Len() returns natural numbers. Index starts from 0.
             if index < len(line_frame_points) -2:
                 next_point = line_frame_points[index+1]
                 track_angle = math.atan2((next_point[1] - point[1]), 
@@ -741,15 +741,11 @@ class PathGen:
             else:
                 track_angle = 0
             
-            #If +ve angle, add -180 [[x],[y]]
-            if self.vx_line_frame[1][0] > 0.0:
-                vehicle_to_point_angle = path_utils.sum_angles_radians(vehicle_to_point_angle, -math.pi)
-                # print(vehicle_to_point_angle)
-
             vehicle_to_point_angle_degree = math.degrees(vehicle_to_point_angle)    
-            #Carve out the sector.
-            if -90 < (vehicle_to_point_angle_degree) and (vehicle_to_point_angle_degree) < 90:
-                if vehicle_to_point_distance > 15:
+            #Heading constraint.
+            if self.min_scan_angle < (vehicle_to_point_angle_degree) and (vehicle_to_point_angle_degree) < self.max_scan_angle:
+                #Distance constraint.
+                if vehicle_to_point_distance > self.distance_constraint * 1/self.resolution:
                     valid_distance.append(vehicle_to_point_distance)
                     valid_angle.append(vehicle_to_point_angle)
                     valid_track.append(track_angle)
@@ -768,8 +764,8 @@ class PathGen:
             return valid_point[min_index]
 
         except ValueError:
-            print("No valid point")
-            return None
+            # print("No valid point")
+            return -1
 
 if __name__ == "__main__":
     rospy.init_node('path_node')
