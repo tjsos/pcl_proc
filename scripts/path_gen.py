@@ -41,7 +41,7 @@ class PathGen:
         self.distance_constraint = rospy.get_param("path_generator/distance_constraint",90)
         
         self.max_surge = rospy.get_param("helm/path_3d/surge_velocity")
-        self.max_yaw_rate = rospy.get_param("helm/teleop/max_yaw_rate")
+        self.max_yaw_rate = rospy.get_param("waypoint_admin/max_yaw_rate")
 
         #Costmap subscriber.
         rospy.Subscriber(costmap_topic, OccupancyGrid, self.mapCB)
