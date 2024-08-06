@@ -112,6 +112,15 @@ def model_f(x, a:float, b:float, c:float):
     return a*x**2 + b* x**1 +c
 
 def calculate_slope(x_coords:list, y_coords:list):
+    """
+    Function to calculate slope 
+    based on https://doi.org/10.1016/j.ifacol.2015.10.262 
+    to handle vertical slope situations
+
+    Args:
+        x_coords: list of x_cordinates in {E}
+        y_coords: list of y_cordinates in {E}
+    """
     # Ensure there are at least two points
     if len(x_coords) < 2 or len(y_coords) < 2:
         raise ValueError("At least two points are required to calculate a slope.")
@@ -137,6 +146,12 @@ def calculate_slope(x_coords:list, y_coords:list):
     return beta_1, beta_0
 
 def sum_angles_radians(*angles):
+    """
+    Wrap angles within -pi,pi.
+
+    Args:
+        *angles: any number of arguments of angles in radians
+    """
     total = sum(angles)
     if total>math.pi:
         total = total - 2*math.pi

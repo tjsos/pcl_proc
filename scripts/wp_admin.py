@@ -7,10 +7,9 @@
 
 #rosbag record /alpha_rise/path/current_state /alpha_rise/path/distance_to_obstacle /alpha_rise/odometry/filtered/local
 import rospy
-from nav_msgs.msg import Path, Odometry
-from geometry_msgs.msg import PolygonStamped, Point32, PointStamped, PoseStamped, Point
+from nav_msgs.msg import Path
+from geometry_msgs.msg import PolygonStamped, Point32, PointStamped, Point
 from std_msgs.msg import Float32
-import tf.transformations as tf_transform
 import math
 from mvp_msgs.srv import GetStateRequest, GetState, ChangeState, ChangeStateRequest, GetWaypoints, GetWaypointsRequest
 import time
@@ -24,12 +23,11 @@ class Wp_Admin:
         self.distance_in_meters = rospy.get_param("path_generator/standoff_distance_meters",15)
         update_waypoint_topic = rospy.get_param("waypoint_admin/update_waypoint_topic")
         path_topic = rospy.get_param("path_generator/path_topic")
-        state_topic = path_topic + '/state'
-        distance_to_obstacle_topic = path_topic + '/distance_to_obstacle'
 
         self.get_state_service = rospy.get_param("waypoint_admin/get_state_service", "/alpha_rise/helm/get_state")
         self.change_state_service = rospy.get_param("waypoint_admin/change_state_service", "/alpha_rise/helm/change_state")
         self.get_waypoint_service = rospy.get_param("waypoint_admin/get_waypoint", "/alpha_rise/helm/path_3d/get_next_waypoints")
+        self.n_points = rospy.get_param("path_generator/points_to_sample_from_curve",20)
 
         #Waypoint selection param
         self.update_rate = rospy.get_param("waypoint_admin/check_state_update_rate")
@@ -37,11 +35,11 @@ class Wp_Admin:
         
         #Declare Pubs
         self.pub_update = rospy.Publisher(update_waypoint_topic, PolygonStamped, queue_size=1)
-        self.pub_state = rospy.Publisher(state_topic, Float32, queue_size=1)
+        self.pub_state = rospy.Publisher(path_topic + '/state', Float32, queue_size=1)
         
         #Declare Subs
         rospy.Subscriber(path_topic, Path, callback=self.path_cB)
-        rospy.Subscriber(distance_to_obstacle_topic, Float32, callback= self.distance_cB)
+        rospy.Subscriber(path_topic + '/distance_to_obstacle', Float32, callback= self.distance_cB)
         rospy.Subscriber(path_topic +"/best_point", Point, callback=self.point_cB)
 
         #Declare variables
@@ -72,21 +70,9 @@ class Wp_Admin:
             self.pub_state.publish(1)
 
     def path_cB(self, msg):
-        #Get ODOM to VX TF
-        self.odom_to_base_tf = self.tf_buffer.lookup_transform("alpha_rise/base_link", "alpha_rise/odom", 
-                                                               rospy.Time(0), rospy.Duration(1.0))
-        
         #Vx position and bearing in Odom frame.
         self.base_to_odom_tf = self.tf_buffer.lookup_transform("alpha_rise/odom", "alpha_rise/base_link", 
                                                                rospy.Time(0), rospy.Duration(1.0))
-        self.vx_x = self.base_to_odom_tf.transform.translation.x
-        self.vx_y = self.base_to_odom_tf.transform.translation.y
-        self.vx_yaw = tf_transform.euler_from_quaternion([self.base_to_odom_tf.transform.rotation.x,
-                                            self.base_to_odom_tf.transform.rotation.y,
-                                            self.base_to_odom_tf.transform.rotation.z,
-                                            self.base_to_odom_tf.transform.rotation.w])[2]
-        self.vx_yaw = math.degrees(self.vx_yaw)
-        
         #Create Waypoint Message
         wp = PolygonStamped()
         wp.header.stamp = msg.header.stamp
@@ -94,19 +80,14 @@ class Wp_Admin:
         
         #Check state whether survey_3d or start
         self.check_state()
-        if len(msg.poses) > 10:
-            if self.state == "survey_3d":
-                x_c = self.x 
-                y_c = self.y
+        # Valid path is n_points long.
+        if self.state == "survey_3d":
+            if len(msg.poses) == self.n_points:
                 print("[INFO]: Following Mode", time.time())
-                wp.polygon.points.append(Point32(x_c ,y_c, self.depth))
+                wp.polygon.points.append(Point32(self.x ,self.y, self.depth))
                 self.pub_update.publish(wp)
 
-            elif self.state == "start":     
-                self.no_path_bhvr(wp)
-                
-        else:
-            #Else no path, iceberg acquisiton mode
+        elif self.state == "start":     
             self.no_path_bhvr(wp)
 
     def no_path_bhvr(self, wp):
