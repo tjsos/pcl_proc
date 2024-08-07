@@ -9,7 +9,7 @@ import rospy
 import tf2_ros
 import tf.transformations as tf_transform
 from nav_msgs.msg import OccupancyGrid, Path
-from geometry_msgs.msg import PoseStamped, TransformStamped, Point
+from geometry_msgs.msg import PoseStamped, Point
 from std_msgs.msg import Float32
 import numpy as np
 import cv2
@@ -41,7 +41,7 @@ class PathGen:
         self.distance_constraint = rospy.get_param("path_generator/distance_constraint",90)
         
         self.max_surge = rospy.get_param("helm/path_3d/surge_velocity")
-        self.max_yaw_rate = rospy.get_param("helm/teleop/max_yaw_rate")
+        self.max_yaw_rate = rospy.get_param("waypoint_admin/max_yaw_rate")
 
         #Costmap subscriber.
         rospy.Subscriber(costmap_topic, OccupancyGrid, self.mapCB)
@@ -61,6 +61,8 @@ class PathGen:
         self.br = tf2_ros.TransformBroadcaster()
 
         self.start_time = time.time()
+
+        self.path = None
         
     def mapCB(self, message:OccupancyGrid):
         """
@@ -109,7 +111,6 @@ class PathGen:
         dilate = cv2.dilate(dilate, (5,5), 2)
         dilate = cv2.dilate(dilate, (5,5), 2)
 
-
         """
         Edges, Lines and Curves
         """
@@ -127,6 +128,7 @@ class PathGen:
         path_cells = self.curve_fit(x_list, y_list)
         # Project line in odom frame
         path_odom_frame = self.vx_to_odom_frame_tf(path_cells)
+        
         """
         Path
         """
@@ -147,7 +149,7 @@ class PathGen:
         if self.debug:
             if not np.array_equal(vx_frame_image, []):
                 vx_frame_image_copy = vx_frame_image.copy()
-            ## Compare the Canny and Custom
+                ## Compare the Canny and Custom
                 compare_path = path_utils. compare_two_lists(raw_pixels, path_odom_frame, self.height, self.width)
                 viz_edges = path_utils.compare_two_lists(raw_pixels, edge, self.height, self.width)
                 compare_edge = path_utils.compare_points_with_image(vx_frame_image_copy, path_cells)
@@ -157,7 +159,7 @@ class PathGen:
                 cv2.imshow("edge_frame", edge_frame_debug)
                 cv2.waitKey(1)
             else:
-                rospy.logwarn_once("Empty Costmap")
+                rospy.logwarn("Empty Costmap")
     
     def get_usable_edges(self, coordinates:list):
         """
@@ -330,7 +332,16 @@ class PathGen:
             return [],[]
     
     def edge_shifting(self, vx_frame:np.array):
+        """
+        Function to shift the contour towards the vehicle with a stand-off distance
 
+        Args:
+            vx_frame: Costmap image relative to the vehicle.
+
+        Returns:
+            x_frame_line_list: List of x_cordinates of the shifted contour
+            y_frame_line_list: List of y_cordinates of the shifted contour
+        """
         if not np.array_equal(vx_frame, []):
             # vx_frame_cropped = vx_frame[ :, self.width//2 :]
             vx_frame_cropped = vx_frame[ :, :]       
@@ -451,11 +462,11 @@ class PathGen:
 
 
         Args:
-            vx_frame: Image depicting points in vehicle frame.
+            x_frame_line_list: List of x_cordinates of the shifted contour
+            y_frame_line_list: List of y_cordinates of the shifted contour
         
         Returns:
-            sampled_coordinates: List of fitted points in vehicle frame
-            polar_coordinates: List of fitted points in polar system with origin being center of image.
+            vx_frame_model: List of cordinates [[x,y]] of the curve in vehicle relative costmap image.
         """
         if x_coordinates != None or y_coordinates != None:
             try:
@@ -514,8 +525,8 @@ class PathGen:
                 return vx_frame_model
 
             except TypeError:
-                print(f"[WARN]: No solution of curve found [{time.time()}]")
-                return None
+                rospy.logwarn("No solution of curve found")
+                return -1
         else:
             return None
         
@@ -525,15 +536,13 @@ class PathGen:
 
         
         Args:
-            polar_list: List of fitted points in polar system with origin being center of image
+            cart_list: List of cordinates [[x,y]] of the curve in vehicle relative costmap image.
 
         Returns:
-            cartesian_coordinates: List of fitted points in Odom frame
+            cartesian_coordinates: List of cordinates [[x,y]] in odom relative costmap image.
         """
         if cart_list != None:
-            if cart_list == -1:
-                return -1
-            else:
+            if cart_list != -1:
                 cartesian_coordinates = [(x - self.height//2, self.width//2 - y) for x, y in cart_list]
                 self.best_point = [self.best_point[0] - self.height//2, self.width//2 - self.best_point[1]]
                 
@@ -608,6 +617,8 @@ class PathGen:
                 # cartesian_coordinates = sorted(cartesian_coordinates, key=lambda coord: coord[1], reverse=True)
 
                 return cartesian_coordinates
+            else:
+                return -1
         else:
             return None
         
@@ -617,52 +628,58 @@ class PathGen:
 
 
         Args:
-            shifted_coordinates: List of fitted points in odom frame
+            shifted_coordinates: List of fitted points in odom relative costmap image
         """
         if shifted_coordinates!= None:
-            path = Path()
-            path.header.frame_id = self.frame
-            path.header.stamp =  self.time
-        
-            for index, cords in enumerate(shifted_coordinates):
-                pose_stamped = PoseStamped()
-                pose_stamped.header.frame_id = self.frame#
-                pose_stamped.header.stamp = self.time
-                pose_stamped.header.seq = index
-
-                #IMAGE TO MAP FRAME FIXED TO ODOMs
-                """
-                ------>x COSTMAP IMAGE
-                |
-                |      ^x
-                |      |
-                |      |
-                |  y<--- VEHICLE FRAME
-                |   
-                yV
-                """
-                x = -cords[1]
-                y = -cords[0]
-
-                x = ((self.width//2 + x) * self.resolution) + self.vx_x
-                y = ((self.height//2 + y)* self.resolution ) + self.vx_y
-                
-                pose_stamped.pose.position.x = x#self.height//4 - cords[1] * self.resolution
-                pose_stamped.pose.position.y = y#self.height//4 - cords[0] * self.resolution 
-                pose_stamped.pose.orientation.x = 0
-                pose_stamped.pose.orientation.y = 0
-                pose_stamped.pose.orientation.z = 0
-                pose_stamped.pose.orientation.w = 1
-                path.poses.append(pose_stamped)
-            self.pub_path.publish(path)
-
-            #Pub Best Point
-            self.best_point = [-self.best_point[1], -self.best_point[0]]
-            self.best_point = [((self.width//2 + self.best_point[0]) * self.resolution) + self.vx_x,
-                                   ((self.height//2 + self.best_point[1]) * self.resolution) + self.vx_y]
+            if shifted_coordinates!= -1:
+                path = Path()
+                path.header.frame_id = self.frame
+                path.header.stamp =  self.time
             
-            self.best_point_pub.publish(Point(self.best_point[0], self.best_point[1], 0))
+                for index, cords in enumerate(shifted_coordinates):
+                    pose_stamped = PoseStamped()
+                    pose_stamped.header.frame_id = self.frame#
+                    pose_stamped.header.stamp = self.time
+                    pose_stamped.header.seq = index
 
+                    #IMAGE TO MAP FRAME FIXED TO ODOMs
+                    """
+                    ------>x COSTMAP IMAGE
+                    |
+                    |      ^x
+                    |      |
+                    |      |
+                    |  y<--- VEHICLE FRAME
+                    |   
+                    yV
+                    """
+                    x = -cords[1]
+                    y = -cords[0]
+
+                    x = ((self.width//2 + x) * self.resolution) + self.vx_x
+                    y = ((self.height//2 + y)* self.resolution ) + self.vx_y
+                    
+                    pose_stamped.pose.position.x = x#self.height//4 - cords[1] * self.resolution
+                    pose_stamped.pose.position.y = y#self.height//4 - cords[0] * self.resolution 
+                    pose_stamped.pose.orientation.x = 0
+                    pose_stamped.pose.orientation.y = 0
+                    pose_stamped.pose.orientation.z = 0
+                    pose_stamped.pose.orientation.w = 1
+                    path.poses.append(pose_stamped)
+                self.path = path
+                self.pub_path.publish(path)
+
+                #Pub Best Point
+                self.best_point = [-self.best_point[1], -self.best_point[0]]
+                self.best_point = [((self.width//2 + self.best_point[0]) * self.resolution) + self.vx_x,
+                                    ((self.height//2 + self.best_point[1]) * self.resolution) + self.vx_y]
+                
+                self.best_point_pub.publish(Point(self.best_point[0], self.best_point[1], 0))
+            
+            else:
+                if self.path != None:
+                    self.pub_path.publish(self.path)
+    
         else:
             path = Path()
             path.header.frame_id = self.frame
@@ -680,6 +697,12 @@ class PathGen:
             self.pub_path.publish(path)
     
     def get_distance_to_obstacle(self, vx_image:np.array):
+        """
+        Get distance to the obstacle from the vehicle.
+
+        Args:
+            vx_image: The vehicle relative costmap image.
+        """
         if not np.array_equal(vx_image, []):
             min_y = float('inf')
             shortest_point = None
@@ -717,6 +740,13 @@ class PathGen:
             return -1
 
     def get_best_point(self, line_frame_points):
+        """
+        Function to calc the best point to pursue.
+
+        Args:
+            line_frame_points: list of cordinates [[x,y]] in {L} frame.
+        """
+
         #Cost calc in {L}
         valid_point, valid_distance, valid_angle, valid_track = [],[],[], []
         for index, point in enumerate((line_frame_points)):
