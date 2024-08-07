@@ -61,6 +61,8 @@ class PathGen:
         self.br = tf2_ros.TransformBroadcaster()
 
         self.start_time = time.time()
+
+        self.path = None
         
     def mapCB(self, message:OccupancyGrid):
         """
@@ -157,7 +159,7 @@ class PathGen:
                 cv2.imshow("edge_frame", edge_frame_debug)
                 cv2.waitKey(1)
             else:
-                rospy.logwarn_once("Empty Costmap")
+                rospy.logwarn("Empty Costmap")
     
     def get_usable_edges(self, coordinates:list):
         """
@@ -523,8 +525,8 @@ class PathGen:
                 return vx_frame_model
 
             except TypeError:
-                rospy.logwarn_once(f"[WARN]: No solution of curve found [{time.time()}]")
-                return None
+                rospy.logwarn("No solution of curve found")
+                return -1
         else:
             return None
         
@@ -540,6 +542,7 @@ class PathGen:
             cartesian_coordinates: List of cordinates [[x,y]] in odom relative costmap image.
         """
         if cart_list != None:
+            if cart_list != -1:
                 cartesian_coordinates = [(x - self.height//2, self.width//2 - y) for x, y in cart_list]
                 self.best_point = [self.best_point[0] - self.height//2, self.width//2 - self.best_point[1]]
                 
@@ -614,6 +617,8 @@ class PathGen:
                 # cartesian_coordinates = sorted(cartesian_coordinates, key=lambda coord: coord[1], reverse=True)
 
                 return cartesian_coordinates
+            else:
+                return -1
         else:
             return None
         
@@ -626,49 +631,55 @@ class PathGen:
             shifted_coordinates: List of fitted points in odom relative costmap image
         """
         if shifted_coordinates!= None:
-            path = Path()
-            path.header.frame_id = self.frame
-            path.header.stamp =  self.time
-        
-            for index, cords in enumerate(shifted_coordinates):
-                pose_stamped = PoseStamped()
-                pose_stamped.header.frame_id = self.frame#
-                pose_stamped.header.stamp = self.time
-                pose_stamped.header.seq = index
-
-                #IMAGE TO MAP FRAME FIXED TO ODOMs
-                """
-                ------>x COSTMAP IMAGE
-                |
-                |      ^x
-                |      |
-                |      |
-                |  y<--- VEHICLE FRAME
-                |   
-                yV
-                """
-                x = -cords[1]
-                y = -cords[0]
-
-                x = ((self.width//2 + x) * self.resolution) + self.vx_x
-                y = ((self.height//2 + y)* self.resolution ) + self.vx_y
-                
-                pose_stamped.pose.position.x = x#self.height//4 - cords[1] * self.resolution
-                pose_stamped.pose.position.y = y#self.height//4 - cords[0] * self.resolution 
-                pose_stamped.pose.orientation.x = 0
-                pose_stamped.pose.orientation.y = 0
-                pose_stamped.pose.orientation.z = 0
-                pose_stamped.pose.orientation.w = 1
-                path.poses.append(pose_stamped)
-            self.pub_path.publish(path)
-
-            #Pub Best Point
-            self.best_point = [-self.best_point[1], -self.best_point[0]]
-            self.best_point = [((self.width//2 + self.best_point[0]) * self.resolution) + self.vx_x,
-                                   ((self.height//2 + self.best_point[1]) * self.resolution) + self.vx_y]
+            if shifted_coordinates!= -1:
+                path = Path()
+                path.header.frame_id = self.frame
+                path.header.stamp =  self.time
             
-            self.best_point_pub.publish(Point(self.best_point[0], self.best_point[1], 0))
+                for index, cords in enumerate(shifted_coordinates):
+                    pose_stamped = PoseStamped()
+                    pose_stamped.header.frame_id = self.frame#
+                    pose_stamped.header.stamp = self.time
+                    pose_stamped.header.seq = index
 
+                    #IMAGE TO MAP FRAME FIXED TO ODOMs
+                    """
+                    ------>x COSTMAP IMAGE
+                    |
+                    |      ^x
+                    |      |
+                    |      |
+                    |  y<--- VEHICLE FRAME
+                    |   
+                    yV
+                    """
+                    x = -cords[1]
+                    y = -cords[0]
+
+                    x = ((self.width//2 + x) * self.resolution) + self.vx_x
+                    y = ((self.height//2 + y)* self.resolution ) + self.vx_y
+                    
+                    pose_stamped.pose.position.x = x#self.height//4 - cords[1] * self.resolution
+                    pose_stamped.pose.position.y = y#self.height//4 - cords[0] * self.resolution 
+                    pose_stamped.pose.orientation.x = 0
+                    pose_stamped.pose.orientation.y = 0
+                    pose_stamped.pose.orientation.z = 0
+                    pose_stamped.pose.orientation.w = 1
+                    path.poses.append(pose_stamped)
+                self.path = path
+                self.pub_path.publish(path)
+
+                #Pub Best Point
+                self.best_point = [-self.best_point[1], -self.best_point[0]]
+                self.best_point = [((self.width//2 + self.best_point[0]) * self.resolution) + self.vx_x,
+                                    ((self.height//2 + self.best_point[1]) * self.resolution) + self.vx_y]
+                
+                self.best_point_pub.publish(Point(self.best_point[0], self.best_point[1], 0))
+            
+            else:
+                if self.path != None:
+                    self.pub_path.publish(self.path)
+    
         else:
             path = Path()
             path.header.frame_id = self.frame
