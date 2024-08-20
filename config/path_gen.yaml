@@ -8,7 +8,7 @@ path_generator:
   canny_min_threshold: 200
   canny_max_threshold: 255
 
-  #To change polynomial, find model_f function in path.py
+  #To change polynomial, find model_f function in path_utils.py
   standoff_distance_meters: 20
   points_to_sample_from_curve: 20
 
