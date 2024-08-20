@@ -147,10 +147,10 @@ class PathGen:
         Visualization
         """
         if self.debug:
-            if not np.array_equal(vx_frame_image, []):
+            if not np.array_equal(vx_frame_image, []) and path_odom_frame != -1:
                 vx_frame_image_copy = vx_frame_image.copy()
                 ## Compare the Canny and Custom
-                compare_path = path_utils. compare_two_lists(raw_pixels, path_odom_frame, self.height, self.width)
+                compare_path = path_utils.compare_two_lists(raw_pixels, path_odom_frame, self.height, self.width)
                 viz_edges = path_utils.compare_two_lists(raw_pixels, edge, self.height, self.width)
                 compare_edge = path_utils.compare_points_with_image(vx_frame_image_copy, path_cells)
 
