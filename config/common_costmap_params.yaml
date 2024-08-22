@@ -20,7 +20,7 @@ obstacles:
   pointcloud: {
     sensor_frame: alpha_rise/ping360_link,
     data_type: PointCloud2,
-    topic: /alpha_rise/pointcloud/filtered,
+    topic: /alpha_rise/msis/pointcloud/filtered,
     #How long to keep each sensor reading in seconds. A value of 0.0 will only keep the most recent reading.
     observation_persistance: 0,
     #Whether or not this observation should be used to mark obstacles.
@@ -31,8 +31,8 @@ obstacles:
     max_obstacle_height: 5,
     #The minimum height in meters of a sensor reading considered valid
     min_obstacle_height: -20,
-    obstacle_range: 5,
-    raytrace_range: 20
+    obstacle_range: 50,
+    raytrace_range: 50
   }
 
 

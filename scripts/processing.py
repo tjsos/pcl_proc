@@ -10,9 +10,9 @@ class Processing:
     def __init__(self) -> None:
         # Subscribe to the PointCloud2 topic
         is_stonefish = rospy.get_param("pcl_filter/stonefish", True)
-        pub_topic = rospy.get_param("pcl_filter/pub_topic")
         if is_stonefish:
             sub_topic = rospy.get_param("pcl_filter/sf_sub_topic")
+            pub_topic = rospy.get_param("pcl_filter/sf_pub_topic")
             self.std_dev_multiplier = rospy.get_param("pcl_filter/sf_std_dev_multiplier", 2)
             #This param is in meters.
             self.radial_filter = rospy.get_param("pcl_filter/sf_radial_filter_param", 2)
@@ -21,6 +21,7 @@ class Processing:
             
         else:
             sub_topic = rospy.get_param("pcl_filter/sub_topic")
+            pub_topic = rospy.get_param("pcl_filter/pub_topic")
             self.std_dev_multiplier = rospy.get_param("pcl_filter/std_dev_multiplier", 2.55)
             #This param is in meters.
             self.radial_filter = rospy.get_param("pcl_filter/radial_filter_param", 2)
