@@ -58,7 +58,7 @@ class Processing:
                 ## Stonefish; bins = 100. Set range = 50m. 1m = 2 bins
                 x, y, z, i = point[:4]
                 #Filter
-                if i > mean+self.std_dev_multiplier *std_dev and i > 10:              
+                if i > mean+self.std_dev_multiplier *std_dev:              
                     points[index][0] = x
                     points[index][1] = y
                     points[index][3] = i

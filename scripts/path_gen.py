@@ -14,7 +14,7 @@ from std_msgs.msg import Float32
 import numpy as np
 import cv2
 import math
-import scipy
+import scipy.optimize
 import path_utils
 import time
 
@@ -104,8 +104,16 @@ class PathGen:
         data = cv2.flip(data, 1)  
         data = cv2.rotate(data, cv2.ROTATE_90_CLOCKWISE)
 
+        erode = cv2.erode(data, (5,5), 2)
+        erode = cv2.erode(erode, (5,5), 2)
+        erode = cv2.erode(erode, (5,5), 2)
+        # erode = cv2.erode(erode, (5,5), 2)    
+        # erode = cv2.erode(erode, (5,5), 2)
+        # dilate = cv2.dilate(dilate, (5,5), 2)
+        # dilate = cv2.dilate(dilate, (5,5), 2)
+
         # Dilate Raw Measurements to get solid reading       
-        dilate = cv2.dilate(data, (5,5), 2)
+        dilate = cv2.dilate(erode, (5,5), 2)
         dilate = cv2.dilate(dilate, (5,5), 2)
         dilate = cv2.dilate(dilate, (5,5), 2)
         dilate = cv2.dilate(dilate, (5,5), 2)
