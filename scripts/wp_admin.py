@@ -118,9 +118,20 @@ class Wp_Admin:
         #Path is still published when no costmap. But the n_points is 1 (vx_x, vx_y)
         #We use that parameter to create a new bhvr mode.
         else:
-            rospy.loginfo("Icerberg Acquisiton Mode")
-
-
+            rospy.loginfo("Searching Mode")
+            wp = PolygonStamped()
+            x = self.base_to_odom_tf.transform.translation.x
+            y = self.base_to_odom_tf.transform.translation.y
+            wp.header.stamp = msg.header.stamp
+            wp.header.frame_id = msg.header.frame_id
+            wp.polygon.points.append(Point32(x ,y+2, self.depth))
+            #Switch state to survey_3d
+            service_client_change_state = rospy.ServiceProxy(self.change_state_service, ChangeState)
+            request = ChangeStateRequest("survey_3d", self.node_name)
+            response = service_client_change_state(request)
+            
+            self.pub_update.publish(wp)
+        
 
     def iceberg_reacquisition_mode(self, wp):
         """

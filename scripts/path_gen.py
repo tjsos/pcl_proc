@@ -81,6 +81,7 @@ class PathGen:
         vx_odom_tf = self.buffer.lookup_transform(self.odom_frame, self.base_frame, rospy.Time())
         self.vx_x = vx_odom_tf.transform.translation.x
         self.vx_y = vx_odom_tf.transform.translation.y
+        self.vx_z = vx_odom_tf.transform.translation.z # depth is -ve
 
         """
         Costmap
@@ -630,57 +631,73 @@ class PathGen:
         Args:
             shifted_coordinates: List of fitted points in odom relative costmap image
         """
-        if shifted_coordinates!= None:
-            if shifted_coordinates!= -1:
+        if self.vx_z < -(math.tan(math.radians(12.5)) * self.distance_in_meters): #-2:
+            if shifted_coordinates!= None:
+                if shifted_coordinates!= -1:
+                    path = Path()
+                    path.header.frame_id = self.frame
+                    path.header.stamp =  self.time
+                
+                    for index, cords in enumerate(shifted_coordinates):
+                        pose_stamped = PoseStamped()
+                        pose_stamped.header.frame_id = self.frame#
+                        pose_stamped.header.stamp = self.time
+                        pose_stamped.header.seq = index
+
+                        #IMAGE TO MAP FRAME FIXED TO ODOMs
+                        """
+                        ------>x COSTMAP IMAGE
+                        |
+                        |      ^x
+                        |      |
+                        |      |
+                        |  y<--- VEHICLE FRAME
+                        |   
+                        yV
+                        """
+                        x = -cords[1]
+                        y = -cords[0]
+
+                        x = ((self.width//2 + x) * self.resolution) + self.vx_x
+                        y = ((self.height//2 + y)* self.resolution ) + self.vx_y
+                        
+                        pose_stamped.pose.position.x = x#self.height//4 - cords[1] * self.resolution
+                        pose_stamped.pose.position.y = y#self.height//4 - cords[0] * self.resolution 
+                        pose_stamped.pose.orientation.x = 0
+                        pose_stamped.pose.orientation.y = 0
+                        pose_stamped.pose.orientation.z = 0
+                        pose_stamped.pose.orientation.w = 1
+                        path.poses.append(pose_stamped)
+                    self.path = path
+                    self.pub_path.publish(path)
+
+                    #Pub Best Point
+                    self.best_point = [-self.best_point[1], -self.best_point[0]]
+                    self.best_point = [((self.width//2 + self.best_point[0]) * self.resolution) + self.vx_x,
+                                        ((self.height//2 + self.best_point[1]) * self.resolution) + self.vx_y]
+                    
+                    self.best_point_pub.publish(Point(self.best_point[0], self.best_point[1], 0))
+                
+                else:
+                    if self.path != None:
+                        self.pub_path.publish(self.path)
+        
+            else:
                 path = Path()
                 path.header.frame_id = self.frame
                 path.header.stamp =  self.time
-            
-                for index, cords in enumerate(shifted_coordinates):
-                    pose_stamped = PoseStamped()
-                    pose_stamped.header.frame_id = self.frame#
-                    pose_stamped.header.stamp = self.time
-                    pose_stamped.header.seq = index
-
-                    #IMAGE TO MAP FRAME FIXED TO ODOMs
-                    """
-                    ------>x COSTMAP IMAGE
-                    |
-                    |      ^x
-                    |      |
-                    |      |
-                    |  y<--- VEHICLE FRAME
-                    |   
-                    yV
-                    """
-                    x = -cords[1]
-                    y = -cords[0]
-
-                    x = ((self.width//2 + x) * self.resolution) + self.vx_x
-                    y = ((self.height//2 + y)* self.resolution ) + self.vx_y
-                    
-                    pose_stamped.pose.position.x = x#self.height//4 - cords[1] * self.resolution
-                    pose_stamped.pose.position.y = y#self.height//4 - cords[0] * self.resolution 
-                    pose_stamped.pose.orientation.x = 0
-                    pose_stamped.pose.orientation.y = 0
-                    pose_stamped.pose.orientation.z = 0
-                    pose_stamped.pose.orientation.w = 1
-                    path.poses.append(pose_stamped)
-                self.path = path
+                pose_stamped = PoseStamped()
+                pose_stamped.header.frame_id = self.frame#
+                pose_stamped.header.stamp = self.time
+                pose_stamped.pose.position.x = self.vx_x  #self.height//4 - cords[1] * self.resolution
+                pose_stamped.pose.position.y = self.vx_y #self.height//4 - cords[0] * self.resolution 
+                pose_stamped.pose.orientation.x = 0
+                pose_stamped.pose.orientation.y = 0
+                pose_stamped.pose.orientation.z = 0
+                pose_stamped.pose.orientation.w = 1
+                path.poses.append(pose_stamped)
                 self.pub_path.publish(path)
-
-                #Pub Best Point
-                self.best_point = [-self.best_point[1], -self.best_point[0]]
-                self.best_point = [((self.width//2 + self.best_point[0]) * self.resolution) + self.vx_x,
-                                    ((self.height//2 + self.best_point[1]) * self.resolution) + self.vx_y]
-                
-                self.best_point_pub.publish(Point(self.best_point[0], self.best_point[1], 0))
-            
-            else:
-                if self.path != None:
-                    self.pub_path.publish(self.path)
-    
-        else:
+        else: # depth greater than -2
             path = Path()
             path.header.frame_id = self.frame
             path.header.stamp =  self.time
