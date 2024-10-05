@@ -34,6 +34,8 @@ class Wp_Admin:
         #Waypoint selection param
         self.update_rate = rospy.get_param("waypoint_admin/check_state_update_rate")
         self.depth = rospy.get_param("waypoint_admin/z_value")
+
+        self.search_mode_timer_param = rospy.get_param("waypoint_admin/search_mode_timer")
         
         #Declare Pubs
         self.pub_update = rospy.Publisher(update_waypoint_topic, PolygonStamped, queue_size=1)
@@ -45,7 +47,7 @@ class Wp_Admin:
         rospy.Subscriber(path_topic +"/best_point", Point, callback=self.point_cB)
 
         #Declare variables
-        self.start_time = time.time()
+        self.check_state_timer = time.time()
         self.state = None
         self.distance_to_obstacle = None
 
@@ -55,6 +57,10 @@ class Wp_Admin:
         self.node_name = rospy.get_name()
 
         self.poses = []
+
+        self.count_concentric_circles = 0
+
+        self.search_mode_timer = time.time()
 
     def point_cB(self, msg):
         """
@@ -91,6 +97,10 @@ class Wp_Admin:
         #Vx position and bearing in Odom frame.
         self.base_to_odom_tf = self.tf_buffer.lookup_transform("alpha_rise/odom", "alpha_rise/base_link", 
                                                                rospy.Time(0), rospy.Duration(1.0))
+        
+        #Odom frame point in Vx frame
+        self.odom_to_base_tf = self.tf_buffer.lookup_transform("alpha_rise/base_link", "alpha_rise/odom", 
+                                                               rospy.Time(0), rospy.Duration(1.0))
         #Create Waypoint Message
         wp = PolygonStamped()
         wp.header.stamp = msg.header.stamp
@@ -117,18 +127,51 @@ class Wp_Admin:
         
         #Path is still published when no costmap. But the n_points is 1 (vx_x, vx_y)
         #We use that parameter to create a new bhvr mode.
-        else:     
-            rospy.loginfo("Searching Mode")
+        else:
+            # rospy.loginfo("Searching Mode")
+            if self.state == "start":
+                self.count_concentric_circles += 1
+                self.searching_mode(wp)
 
-            x = self.base_to_odom_tf.transform.translation.x
-            y = self.base_to_odom_tf.transform.translation.y
-            wp.polygon.points.append(Point32(x-10 ,y+1, self.depth))
-            ## survey_3d only checks radius in x,y
+            elif self.state == "survey_3d":
+                #If timer runs out, then the node is killed.
+                if(time.time() - self.search_mode_timer) > self.search_mode_timer_param: #sec
+                    service_client_change_state = rospy.ServiceProxy(self.change_state_service, ChangeState)
+                    request = ChangeStateRequest("start", self.node_name)
+                    response = service_client_change_state(request)
+                    rospy.signal_shutdown("Search Mode Took too long")
 
-            service_client_change_state = rospy.ServiceProxy(self.change_state_service, ChangeState)
-            request = ChangeStateRequest("survey_3d", self.node_name)
-            response = service_client_change_state(request)
-            self.pub_update.publish(wp)
+    def searching_mode(self, wp):
+        """
+        Function to navigate the vehicle 
+        to start searching for iceberg at depth.
+        """
+
+        if self.count_concentric_circles == 1:
+            #Get vehicle position in Odom
+            self.search_mode_center = PointStamped()
+            self.search_mode_center.point.x = self.base_to_odom_tf.transform.translation.x
+            self.search_mode_center.point.y = self.base_to_odom_tf.transform.translation.y
+
+        #Transform to current vx_frame
+        center_in_vx_frame = tf2_geometry_msgs.do_transform_point(self.search_mode_center, self.odom_to_base_tf)        
+        
+        #Grow the search radius incrementally.
+        search_mode_radius = 10 * self.count_concentric_circles
+        search_mode_points = self.draw_arc(number_of_points=self.n_points, 
+                                            start_angle=0, 
+                                            end_angle=2*math.pi,
+                                            center=[center_in_vx_frame.point.x, center_in_vx_frame.point.y],
+                                            radius = search_mode_radius)
+    
+        for i in range(len(search_mode_points)):
+            wp.polygon.points.append(Point32(search_mode_points[i].point.x ,search_mode_points[i].point.y, self.depth))
+
+        service_client_change_state = rospy.ServiceProxy(self.change_state_service, ChangeState)
+        request = ChangeStateRequest("survey_3d", self.node_name)
+        response = service_client_change_state(request)
+        self.pub_update.publish(wp)
+        time.sleep(1)
 
     def iceberg_reacquisition_mode(self, wp):
         """
@@ -139,7 +182,13 @@ class Wp_Admin:
         service_client_change_state = rospy.ServiceProxy(self.change_state_service, ChangeState)
         request = ChangeStateRequest("survey_3d", self.node_name)
         response = service_client_change_state(request)
-        corner_bhvr_points = self.corner_behaviour(number_of_points=self.n_points)
+        #The center point of the circle in vx frame
+        point_of_obstacle = [self.distance_in_meters, -self.distance_in_meters]
+        corner_bhvr_points = self.draw_arc(number_of_points=self.n_points, 
+                                                   start_angle=math.pi/2, 
+                                                   end_angle=0,
+                                                   center=point_of_obstacle,
+                                                   radius = self.distance_in_meters)
     
         #Append the waypoints
         for i in range(len(corner_bhvr_points)):
@@ -151,10 +200,10 @@ class Wp_Admin:
         """
         Function to check the state of the helm
         """
-        elapsed_time = time.time() - self.start_time
+        elapsed_time = time.time() - self.check_state_timer
         #Check state every 2s
         if elapsed_time > self.update_rate:
-            self.start_time = time.time()
+            self.check_state_timer = time.time()
             service_client_get_state = rospy.ServiceProxy(self.get_state_service, GetState)
             request = GetStateRequest("")
             response = service_client_get_state(request)
@@ -170,7 +219,7 @@ class Wp_Admin:
 
         return (x2, y2)
 
-    def corner_behaviour(self, number_of_points):
+    def draw_arc(self, number_of_points, start_angle, end_angle, center, radius):
         """
         Create an arc in vehicle frame using parametric equation of circle.
         Then transform to odom.
@@ -179,15 +228,12 @@ class Wp_Admin:
         corner_bhvr_points = []
         points_in_odom_frame = []
         
-        #The center point of the circle in vx frame
-        point_of_obstacle = [self.distance_in_meters, -self.distance_in_meters]
-        
         #list of angle increments
-        angles = np.linspace(math.pi/2, 0, number_of_points)
+        angles = np.linspace(start_angle, end_angle, number_of_points)
 
         #list of circle points in vx_frame
-        corner_bhvr_points = [(point_of_obstacle[0] + self.distance_in_meters * math.cos(angle), 
-                            point_of_obstacle[1] + self.distance_in_meters * math.sin(angle))
+        corner_bhvr_points = [(center[0] + radius * math.cos(angle), 
+                            center[1] + radius * math.sin(angle))
                             for angle in angles]
         
         #Tf to odom frame
