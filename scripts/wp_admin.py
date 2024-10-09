@@ -2,7 +2,7 @@
 
 #Author: Tony Jacob
 #Part of RISE Project. 
-#Assigns waypoints from the path to be fed to the vx nav system.
+#Manages the autonomy state machine of the vehicle
 #tony.jacob@uri.edu
 
 #rosbag record /alpha_rise/path/current_state /alpha_rise/path/distance_to_obstacle /alpha_rise/odometry/filtered/local
@@ -35,8 +35,13 @@ class Wp_Admin:
         self.update_rate = rospy.get_param("waypoint_admin/check_state_update_rate")
         self.depth = rospy.get_param("waypoint_admin/z_value")
 
+        #Timers
         self.search_mode_timer_param = rospy.get_param("waypoint_admin/search_mode_timer")
+        self.search_mode_timer = time.time()
         
+        self.follow_mode_timer_param = rospy.get_param("waypoint_admin/follow_mode_timer")
+        self.follow_flag = 0
+
         #Declare Pubs
         self.pub_update = rospy.Publisher(update_waypoint_topic, PolygonStamped, queue_size=1)
         self.pub_state = rospy.Publisher(path_topic + '/state', Float32, queue_size=1)
@@ -59,8 +64,6 @@ class Wp_Admin:
         self.poses = []
 
         self.count_concentric_circles = 0
-
-        self.search_mode_timer = time.time()
 
     def point_cB(self, msg):
         """
@@ -115,11 +118,25 @@ class Wp_Admin:
         if len(msg.poses) == self.n_points:
             if self.state == "survey_3d":
                 if msg.poses != self.poses:
-                    rospy.loginfo("Following Mode")
-                    wp.polygon.points.append(Point32(self.x ,self.y, self.depth))
-                    self.pub_update.publish(wp)
-                    self.poses = msg.poses
-            
+                    
+                    #grab time of follow_mode initializing
+                    if self.follow_flag == 0:
+                        self.follow_mode_timer = time.time()
+                        self.follow_flag =+ 1
+                    
+                    #Feed best point.
+                    if(time.time() - self.follow_mode_timer) < self.follow_mode_timer_param:
+                        rospy.loginfo("Following Mode")
+                        wp.polygon.points.append(Point32(self.x ,self.y, self.depth))
+                        self.pub_update.publish(wp)
+                        self.poses = msg.poses
+                    
+                    #Chart a course away from the iceberg when timer runs out.
+                    #Go to a point 90 degree port side of Vx
+                    else:
+                        rospy.loginfo(f"Exit sequence. Timer ran out at {self.follow_mode_timer_param}s")
+                        self.exit_sequence(wp)
+
             #Iceberg Reacquisition Mode is when 
             #the vehicle reaches end of a valid path.
             elif self.state == "start":     
@@ -140,6 +157,21 @@ class Wp_Admin:
                     request = ChangeStateRequest("start", self.node_name)
                     response = service_client_change_state(request)
                     rospy.signal_shutdown("Search Mode Took too long")
+
+    def exit_sequence(self, wp):
+        """
+        Function to navigate the vehicle 
+        away from the iceberg when the timer runs out.
+        """
+        exit_point = PointStamped()
+        exit_point.point.x = 0
+        exit_point.point.y = 30
+        exit_point_odom_frame = tf2_geometry_msgs.do_transform_point(exit_point, self.base_to_odom_tf)
+
+        wp.polygon.points.append(Point32(exit_point_odom_frame.point.x, exit_point_odom_frame.point.y, 0))
+        self.pub_update.publish(wp)
+        rospy.signal_shutdown(f"Follow Mode completed. Timeout of {self.follow_mode_timer_param}s.Starting course away from the iceberg")
+
 
     def searching_mode(self, wp):
         """
