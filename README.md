@@ -1,6 +1,6 @@
 # pcl_proc
 
-Package to filter msis_pcl pointclouds
+Package for path generation and path following.
 
 ### How to run
 - `roslaunch rise_multirobot bringup_simulation.launch` (or any other vehicle, but change the configs here too accordingly)
