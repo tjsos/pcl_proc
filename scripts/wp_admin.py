@@ -5,7 +5,7 @@
 #Manages the autonomy state machine of the vehicle
 #tony.jacob@uri.edu
 
-#rosbag record /alpha_rise/path/current_state /alpha_rise/path/distance_to_obstacle /alpha_rise/odometry/filtered/local
+#rosbag record /alpha_rise/path/state /alpha_rise/path/distance_to_obstacle /alpha_rise/odometry/filtered/local
 import rospy
 from nav_msgs.msg import Path
 from geometry_msgs.msg import PolygonStamped, Point32, PointStamped, Point
@@ -64,6 +64,10 @@ class Wp_Admin:
         self.poses = []
 
         self.count_concentric_circles = 0
+        
+        self.bool_search_mode = False
+
+        self.bool_exit_mode = False
 
     def point_cB(self, msg):
         """
@@ -86,9 +90,21 @@ class Wp_Admin:
         # print(len(response.wpt))
         # 2 is the len(response.wpt) when in following.
         if len(response.wpt) == 2:
-            self.pub_state.publish(0)
+            if self.bool_exit_mode:
+                # print(self.distance_to_obstacle,"exit_mode",time.time())
+                self.pub_state.publish(2)
+            else:
+                # print(self.distance_to_obstacle,"Following",time.time())
+                self.pub_state.publish(0)
+        #Search Mode
         else:
-            self.pub_state.publish(1)
+            if self.bool_search_mode:
+                # print(self.distance_to_obstacle, "search",time.time())
+                self.pub_state.publish(-1)
+            #Iceberg Reaaq
+            else:
+                # print(self.distance_to_obstacle,"reacq",time.time())
+                self.pub_state.publish(1) 
 
     def path_cB(self, msg):
         """
@@ -127,6 +143,7 @@ class Wp_Admin:
                     #Feed best point.
                     if(time.time() - self.follow_mode_timer) < self.follow_mode_timer_param:
                         rospy.loginfo("Following Mode")
+                        self.bool_search_mode = False
                         wp.polygon.points.append(Point32(self.x ,self.y, self.depth))
                         self.pub_update.publish(wp)
                         self.poses = msg.poses
@@ -163,6 +180,7 @@ class Wp_Admin:
         Function to navigate the vehicle 
         away from the iceberg when the timer runs out.
         """
+        self.bool_exit_mode = True
         exit_point = PointStamped()
         exit_point.point.x = 0
         exit_point.point.y = 30
@@ -170,10 +188,12 @@ class Wp_Admin:
 
         wp.polygon.points.append(Point32(exit_point_odom_frame.point.x, exit_point_odom_frame.point.y, 0))
         self.pub_update.publish(wp)
+        time.sleep(10)
         rospy.signal_shutdown(f"Follow Mode completed. Timeout of {self.follow_mode_timer_param}s.Starting course away from the iceberg")
 
 
     def searching_mode(self, wp):
+        self.bool_search_mode = True
         """
         Function to navigate the vehicle 
         to start searching for iceberg at depth.
