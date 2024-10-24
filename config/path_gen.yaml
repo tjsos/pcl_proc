@@ -24,6 +24,6 @@ waypoint_admin:
   get_waypoint_service: "/alpha_rise/helm/path_3d/get_next_waypoints"
   max_yaw_rate: 0.8 #rad/s #0.8rad is 45degree
   check_state_update_rate: 1 #sec
-  search_mode_timer: 300 #sec
-  follow_mode_timer: 1200 #sec
+  search_mode_timer: 1200 #sec
+  follow_mode_timer: 2000 #sec
   z_value: -5 #meters 
