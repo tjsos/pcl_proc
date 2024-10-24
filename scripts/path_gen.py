@@ -40,7 +40,7 @@ class PathGen:
         self.max_scan_angle = rospy.get_param("path_generator/max_scan_angle",90)
         self.distance_constraint = rospy.get_param("path_generator/distance_constraint",90)
         
-        self.max_surge = rospy.get_param("helm/path_3d/surge_velocity")
+        self.max_surge = rospy.get_param("helm/path_3d/surge_velocity", 0.8)
         self.max_yaw_rate = rospy.get_param("waypoint_admin/max_yaw_rate")
 
         #Costmap subscriber.
@@ -105,8 +105,13 @@ class PathGen:
         data = cv2.flip(data, 1)  
         data = cv2.rotate(data, cv2.ROTATE_90_CLOCKWISE)
 
+        #Erode away speckle noise.
+        erode = cv2.erode(data, (5,5),2)
+        erode = cv2.erode(erode, (5,5),2)
+        # erode = cv2.erode(erode, (5,5),2)
+
         # Dilate Raw Measurements to get solid reading       
-        dilate = cv2.dilate(data, (5,5), 2)
+        dilate = cv2.dilate(erode, (5,5), 2)
         dilate = cv2.dilate(dilate, (5,5), 2)
         dilate = cv2.dilate(dilate, (5,5), 2)
         dilate = cv2.dilate(dilate, (5,5), 2)
@@ -155,7 +160,7 @@ class PathGen:
                 viz_edges = path_utils.compare_two_lists(raw_pixels, edge, self.height, self.width)
                 compare_edge = path_utils.compare_points_with_image(vx_frame_image_copy, path_cells)
 
-                mix= np.hstack((data, viz_edges,vx_frame_image, compare_edge, compare_path))
+                mix= np.hstack((data, dilate,canny_image, viz_edges, compare_path))
                 cv2.imshow("window", mix)
                 cv2.imshow("edge_frame", edge_frame_debug)
                 cv2.waitKey(1)
