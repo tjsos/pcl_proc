@@ -14,7 +14,7 @@ from std_msgs.msg import Float32
 import numpy as np
 import cv2
 import math
-import scipy
+import scipy.optimize
 import path_utils
 import time
 
