@@ -35,6 +35,8 @@ class Wp_Admin:
         self.update_rate = rospy.get_param("waypoint_admin/check_state_update_rate")
         self.depth = rospy.get_param("waypoint_admin/z_value")
 
+        self.search_mode_initial_radius = rospy.get_param("waypoint_admin/search_mode_initial_radius", 10)
+
         #Timers
         self.search_mode_timer_param = rospy.get_param("waypoint_admin/search_mode_timer")
         self.search_mode_timer = time.time()
@@ -209,7 +211,7 @@ class Wp_Admin:
         center_in_vx_frame = tf2_geometry_msgs.do_transform_point(self.search_mode_center, self.odom_to_base_tf)        
         
         #Grow the search radius incrementally.
-        search_mode_radius = 10 * self.count_concentric_circles
+        search_mode_radius = self.search_mode_initial_radius * self.count_concentric_circles
         search_mode_points = self.draw_arc(number_of_points=self.n_points, 
                                             start_angle=0, 
                                             end_angle=2*math.pi,
