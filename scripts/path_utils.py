@@ -33,6 +33,8 @@ def compare_two_lists(list1:list, list2:list, height:int, width:int):
         center = tuple(coordinates)
         cv2.circle(image, center, 1, 255)
     
+    #plot center
+    cv2.circle(image, (height//2, width//2),1,255)
     return image
 
 def compare_points_with_image(frame:np.array, points_list:list):

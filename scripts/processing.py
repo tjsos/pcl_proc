@@ -58,7 +58,7 @@ class Processing:
                 ## Stonefish; bins = 100. Set range = 50m. 1m = 2 bins
                 x, y, z, i = point[:4]
                 #Filter
-                if i > mean+self.std_dev_multiplier *std_dev and i > 10:              
+                if i > mean+self.std_dev_multiplier *std_dev and i>10:              
                     points[index][0] = x
                     points[index][1] = y
                     points[index][3] = i
@@ -81,8 +81,10 @@ class Processing:
         """
         intensities = []
         for index,point in enumerate(pc2.read_points(pointcloud_msg, skip_nans=True)):
-            x, y, z, i = point[:4]
-            intensities.append(i)
+            #Only consider the intensities post the ringing filter.
+            if index >= self.radial_filter * self.bin_meter_coeff:
+                x, y, z, i = point[:4]
+                intensities.append(i)
         intensities = np.array(intensities)
         mean = np.mean(intensities)
         std_dev = np.std(intensities)
