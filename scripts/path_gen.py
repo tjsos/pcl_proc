@@ -17,6 +17,8 @@ import math
 import scipy.optimize
 import path_utils
 import time
+from cv_bridge import CvBridge
+from sensor_msgs.msg import Image
 
 class PathGen:
     def __init__(self) -> None:
@@ -52,6 +54,10 @@ class PathGen:
 
         #Vx_frame image publisher
         self.obstacle_distance_pub = rospy.Publisher(path_topic + "/distance_to_obstacle", Float32, queue_size=1)
+
+        self.image_process_pipeline_pub = rospy.Publisher(path_topic + "/image", Image, queue_size=1)
+
+        self.bridge = CvBridge()
         
         #TF Buffer and Listener
         self.buffer = tf2_ros.Buffer()
@@ -140,6 +146,21 @@ class PathGen:
         """
         self.convert_and_publish_path(path_odom_frame)
 
+        
+        """
+        Image
+        """
+        if not np.array_equal(vx_frame_image, []) and path_odom_frame != -1:
+            vx_frame_image_copy = vx_frame_image.copy()
+            ## Compare the Canny and Custom
+            compare_path = path_utils.compare_two_lists(raw_pixels, path_odom_frame, self.height, self.width)
+            viz_edges = path_utils.compare_two_lists(raw_pixels, edge, self.height, self.width)
+            compare_edge = path_utils.compare_points_with_image(vx_frame_image_copy, path_cells)
+
+            mix= np.hstack((data, dilate,canny_image, viz_edges, compare_path))
+            image_msg = self.bridge.cv2_to_imgmsg(mix)
+            self.image_process_pipeline_pub.publish(image_msg)
+        
         """
         Distance to Obstacle
         """
@@ -154,13 +175,6 @@ class PathGen:
         """
         if self.debug:
             if not np.array_equal(vx_frame_image, []) and path_odom_frame != -1:
-                vx_frame_image_copy = vx_frame_image.copy()
-                ## Compare the Canny and Custom
-                compare_path = path_utils.compare_two_lists(raw_pixels, path_odom_frame, self.height, self.width)
-                viz_edges = path_utils.compare_two_lists(raw_pixels, edge, self.height, self.width)
-                compare_edge = path_utils.compare_points_with_image(vx_frame_image_copy, path_cells)
-
-                mix= np.hstack((data, dilate,canny_image, viz_edges, compare_path))
                 cv2.imshow("window", mix)
                 cv2.imshow("edge_frame", edge_frame_debug)
                 cv2.waitKey(1)
