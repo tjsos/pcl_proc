@@ -9,7 +9,7 @@ import rospy
 import tf2_ros
 import tf.transformations as tf_transform
 from nav_msgs.msg import OccupancyGrid, Path
-from geometry_msgs.msg import PoseStamped, Point
+from geometry_msgs.msg import PoseStamped, Point, TransformStamped
 from std_msgs.msg import Float32
 import numpy as np
 import cv2
@@ -157,7 +157,7 @@ class PathGen:
             viz_edges = path_utils.compare_two_lists(raw_pixels, edge, self.height, self.width)
             compare_edge = path_utils.compare_points_with_image(vx_frame_image_copy, path_cells)
 
-            mix= np.hstack((data, dilate,canny_image, viz_edges, compare_path))
+            mix= np.hstack((data, dilate,canny_image, viz_edges, compare_path, compare_edge))
             image_msg = self.bridge.cv2_to_imgmsg(mix)
             self.image_process_pipeline_pub.publish(image_msg)
         
@@ -566,6 +566,8 @@ class PathGen:
                 cartesian_coordinates = [(x - self.height//2, self.width//2 - y) for x, y in cart_list]
                 self.best_point = [self.best_point[0] - self.height//2, self.width//2 - self.best_point[1]]
                 
+                #edge frame origin cords in image_frame
+                self.new_origin = [self.new_origin[0] - self.height//2, self.width//2 - self.new_origin[1]]
                 """
                 ------>x COSTMAP IMAGE
                 |
@@ -577,6 +579,7 @@ class PathGen:
                 """
                 cartesian_coordinates = [(-y,-x) for x, y in cartesian_coordinates]
                 self.best_point = [-self.best_point[1], -self.best_point[0]]
+                self.new_origin = [-self.new_origin[1], -self.new_origin[0]]
                 """
                 ------>x COSTMAP IMAGE
                 |
@@ -590,6 +593,7 @@ class PathGen:
                 # Step 2: Convert shifted Cartesian coordinates to polar coordinates
                 polar_coordinates = [[np.sqrt(x**2 + y**2), (np.arctan2(y, x))] for x, y in cartesian_coordinates]
                 self.best_point = [np.sqrt(self.best_point[0]**2 + self.best_point[1]**2), np.arctan2(self.best_point[1], self.best_point[0])]
+                self.new_origin = [np.sqrt(self.new_origin[0]**2 + self.new_origin[1]**2), np.arctan2(self.new_origin[1], self.new_origin[0])]
                 
                 vx_theta = self.vx_yaw
                 
@@ -600,9 +604,13 @@ class PathGen:
                     points[1] = (points[1] + np.float64(vx_theta))
                 
                 self.best_point[1] = self.best_point[1] + np.float64(vx_theta)
+                self.new_origin[1] = self.new_origin[1] + np.float64(vx_theta)
+
                 # Convert to Cartesian (x,y)
                 cartesian_coordinates = [[round(r * np.cos(theta)), round(r * np.sin(theta))] for r, theta in polar_coordinates]
                 self.best_point = [round(self.best_point[0] * np.cos(self.best_point[1])),round(self.best_point[0] * np.sin(self.best_point[1]))]
+                self.new_origin = [round(self.new_origin[0] * np.cos(self.new_origin[1])),round(self.new_origin[0] * np.sin(self.new_origin[1]))]
+                
                 """
                 ------>x COSTMAP IMAGE
                 |
@@ -615,6 +623,8 @@ class PathGen:
                 """
                 cartesian_coordinates = [(-y,-x) for x, y in cartesian_coordinates]
                 self.best_point = [-self.best_point[1], -self.best_point[0]]
+                self.new_origin = [-self.new_origin[1], -self.new_origin[0]]
+
                 """
                 ------>x COSTMAP IMAGE
                 |
@@ -627,6 +637,8 @@ class PathGen:
                 # Shift back to Image frame
                 cartesian_coordinates = [[int(x+self.width//2),int(self.height//2 - y)] for x, y in cartesian_coordinates]
                 self.best_point = [int(self.best_point[0] + self.width//2), int(self.height//2 - self.best_point[1])]
+                self.new_origin = [int(self.new_origin[0] + self.width//2), int(self.height//2 - self.new_origin[1])]
+
                 """        
                 ------>xCOSTMAP IMAGE
                 |
@@ -697,6 +709,40 @@ class PathGen:
                                         ((self.height//2 + self.best_point[1]) * self.resolution) + self.vx_y]
                     
                     self.best_point_pub.publish(Point(self.best_point[0], self.best_point[1], 0))
+
+                    self.new_origin = [-self.new_origin[1], -self.new_origin[0]]
+                    self.new_origin = [((self.width//2 + self.new_origin[0]) * self.resolution) + self.vx_x,
+                                        ((self.height//2 + self.new_origin[1]) * self.resolution) + self.vx_y]
+                    
+                    # Broadcast Odom-> Edge Frame TF
+                    odom_costmap_tf = TransformStamped()
+                    odom_costmap_tf.header.stamp = rospy.Time.now()
+                    odom_costmap_tf.header.frame_id = 'alpha_rise/odom'
+                    odom_costmap_tf.child_frame_id = 'alpha_rise/costmap/edge_frame'
+                    odom_costmap_tf.transform.translation.x = self.new_origin[0]
+                    odom_costmap_tf.transform.translation.y = self.new_origin[1]
+                    odom_costmap_tf.transform.translation.z = 0
+                    rotation = tf_transform.quaternion_from_euler(np.float64(3.14),0,np.float64(-self.vx_yaw-1.57))
+                    odom_costmap_tf.transform.rotation.x = rotation[0]
+                    odom_costmap_tf.transform.rotation.y = rotation[1]
+                    odom_costmap_tf.transform.rotation.z = rotation[2]
+                    odom_costmap_tf.transform.rotation.w = rotation[3]
+                    self.br.sendTransform(odom_costmap_tf)
+
+                    # Broadcast Edge Frame-> Line Frame TF
+                    odom_costmap_tf = TransformStamped()
+                    odom_costmap_tf.header.stamp = rospy.Time.now()
+                    odom_costmap_tf.header.frame_id = 'alpha_rise/costmap/edge_frame'
+                    odom_costmap_tf.child_frame_id = 'alpha_rise/costmap/line_frame'
+                    odom_costmap_tf.transform.translation.x = 0
+                    odom_costmap_tf.transform.translation.y = 0
+                    odom_costmap_tf.transform.translation.z = 0
+                    rotation = tf_transform.quaternion_from_euler(0,0,np.float64(-self.vx_yaw))
+                    odom_costmap_tf.transform.rotation.x = rotation[0]
+                    odom_costmap_tf.transform.rotation.y = rotation[1]
+                    odom_costmap_tf.transform.rotation.z = rotation[2]
+                    odom_costmap_tf.transform.rotation.w = rotation[3]
+                    self.br.sendTransform(odom_costmap_tf)
                 
                 else:
                     if self.path != None:
