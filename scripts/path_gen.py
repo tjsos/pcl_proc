@@ -737,7 +737,7 @@ class PathGen:
                     odom_costmap_tf.transform.translation.x = 0
                     odom_costmap_tf.transform.translation.y = 0
                     odom_costmap_tf.transform.translation.z = 0
-                    rotation = tf_transform.quaternion_from_euler(0,0,np.float64(-self.vx_yaw))
+                    rotation = tf_transform.quaternion_from_euler(0,0, np.float64(self.angle_from_e_to_l))
                     odom_costmap_tf.transform.rotation.x = rotation[0]
                     odom_costmap_tf.transform.rotation.y = rotation[1]
                     odom_costmap_tf.transform.rotation.z = rotation[2]
