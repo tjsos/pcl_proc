@@ -196,6 +196,9 @@ class Wp_Admin:
 
     def searching_mode(self, wp):
         self.bool_search_mode = True
+
+        #Change here for initial depth.
+        search_mode_depth = round(-(math.tan(math.radians(12.5)) * 50),2)
         """
         Function to navigate the vehicle 
         to start searching for iceberg at depth.
@@ -219,7 +222,7 @@ class Wp_Admin:
                                             radius = search_mode_radius)
     
         for i in range(len(search_mode_points)):
-            wp.polygon.points.append(Point32(search_mode_points[i].point.x ,search_mode_points[i].point.y, self.depth))
+            wp.polygon.points.append(Point32(search_mode_points[i].point.x ,search_mode_points[i].point.y, search_mode_depth))
 
         service_client_change_state = rospy.ServiceProxy(self.change_state_service, ChangeState)
         request = ChangeStateRequest("survey_3d", self.node_name)
