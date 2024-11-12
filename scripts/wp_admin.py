@@ -44,6 +44,9 @@ class Wp_Admin:
         self.follow_mode_timer_param = rospy.get_param("waypoint_admin/follow_mode_timer")
         self.follow_flag = 0
 
+        self.exit_mode_distance = rospy.get_param("waypoint_admin/exit_mode_distance")
+
+
         #Declare Pubs
         self.pub_update = rospy.Publisher(update_waypoint_topic, PolygonStamped, queue_size=1)
         self.pub_state = rospy.Publisher(path_topic + '/state', Float32, queue_size=1)
@@ -183,10 +186,23 @@ class Wp_Admin:
         away from the iceberg when the timer runs out.
         """
         self.bool_exit_mode = True
+                
+        #Line_frame point in Odom Frame
+        line_frame_to_odom_tf = self.tf_buffer.lookup_transform("alpha_rise/odom", 
+                                                                "alpha_rise/costmap/line_frame", 
+                                                               rospy.Time(0), rospy.Duration(1.0))
+        
+        vx_to_line_frame_tf = self.tf_buffer.lookup_transform("alpha_rise/costmap/line_frame", 
+                                                                "alpha_rise/base_link", 
+                                                               rospy.Time(0), rospy.Duration(1.0))
         exit_point = PointStamped()
         exit_point.point.x = 0
-        exit_point.point.y = 30
-        exit_point_odom_frame = tf2_geometry_msgs.do_transform_point(exit_point, self.base_to_odom_tf)
+        if vx_to_line_frame_tf.transform.translation.y > 0:
+            exit_point.point.y = self.exit_mode_distance + self.distance_in_meters
+        else:
+            exit_point.point.y = -self.exit_mode_distance - self.distance_in_meters
+            
+        exit_point_odom_frame = tf2_geometry_msgs.do_transform_point(exit_point, line_frame_to_odom_tf)
 
         wp.polygon.points.append(Point32(exit_point_odom_frame.point.x, exit_point_odom_frame.point.y, 0))
         self.pub_update.publish(wp)

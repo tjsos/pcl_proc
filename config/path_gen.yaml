@@ -28,3 +28,4 @@ waypoint_admin:
   follow_mode_timer: 2000 #sec
   z_value: -5 #meters 
   search_mode_initial_radius: 10 #m
+  exit_mode_distance: 30 #m
