@@ -30,6 +30,8 @@ class Wp_Admin:
         self.change_state_service = rospy.get_param("waypoint_admin/change_state_service", "/alpha_rise/helm/change_state")
         self.get_waypoint_service = rospy.get_param("waypoint_admin/get_waypoint", "/alpha_rise/helm/path_3d/get_next_waypoints")
         self.n_points = rospy.get_param("path_generator/points_to_sample_from_curve",20)
+        self.reacquision_s_param = rospy.get_param("waypoint_admin/reacquision_s_param",0.5)
+
 
         #Waypoint selection param
         self.update_rate = rospy.get_param("waypoint_admin/check_state_update_rate")
@@ -137,6 +139,14 @@ class Wp_Admin:
         # Path is always being published.
         # If same path, then no new path is then published.
         if len(msg.poses) == self.n_points:
+            
+            #Check number of points in front of the vehicle
+            n_points_above_vx = 0
+            for pose in msg.poses:
+                path_vx_frame = tf2_geometry_msgs.do_transform_pose(pose, self.odom_to_base_tf)
+                if path_vx_frame.pose.position.x > 0:
+                    n_points_above_vx += 1 
+
             if self.state == "survey_3d":
                 if msg.poses != self.poses:
                     
@@ -161,7 +171,7 @@ class Wp_Admin:
 
             #Iceberg Reacquisition Mode is when 
             #the vehicle reaches end of a valid path.
-            elif self.state == "start":     
+            elif n_points_above_vx <= 2: #self.state == "start":     
                 self.iceberg_reacquisition_mode(wp)
         
         #Path is still published when no costmap. But the n_points is 1 (vx_x, vx_y)
@@ -256,7 +266,7 @@ class Wp_Admin:
         request = ChangeStateRequest("survey_3d", self.node_name)
         response = service_client_change_state(request)
         #The center point of the circle in vx frame
-        point_of_obstacle = [self.distance_in_meters, -self.distance_in_meters]
+        point_of_obstacle = [self.reacquision_s_param*self.distance_in_meters, -self.distance_in_meters]
         corner_bhvr_points = self.draw_arc(number_of_points=self.n_points, 
                                                    start_angle=math.pi/2, 
                                                    end_angle=0,

@@ -29,3 +29,4 @@ waypoint_admin:
   z_value: -5 #meters 
   search_mode_initial_radius: 10 #m
   exit_mode_distance: 30 #m
+  reacquisition_s_param: 0.5
