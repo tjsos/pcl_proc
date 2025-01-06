@@ -179,7 +179,7 @@ class PathGen:
                 cv2.imshow("edge_frame", edge_frame_debug)
                 cv2.waitKey(1)
             else:
-                rospy.logwarn("Empty Costmap")
+                rospy.logwarn_throttle(3, "Empty Costmap")
     
     def get_usable_edges(self, coordinates:list):
         """
@@ -545,7 +545,7 @@ class PathGen:
                 return vx_frame_model
 
             except TypeError:
-                rospy.logwarn("No solution of curve found")
+                rospy.logwarn_throttle(3, "No solution of curve found")
                 return -1
         else:
             return None
@@ -764,7 +764,7 @@ class PathGen:
                 path.poses.append(pose_stamped)
                 self.pub_path.publish(path)
         else: # depth greater than -2
-            rospy.loginfo(f"Desired depth: {round(-(math.tan(math.radians(12.5)) * self.distance_in_meters),2)}, Current Depth: {round(self.vx_z,2)}")
+            rospy.loginfo_throttle(3, f"Desired depth: {round(-(math.tan(math.radians(12.5)) * self.distance_in_meters))}, Current Depth: {round(self.vx_z)}")
             path = Path()
             path.header.frame_id = self.frame
             path.header.stamp =  self.time
