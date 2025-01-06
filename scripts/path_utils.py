@@ -138,6 +138,8 @@ def calculate_slope(x_coords:list, y_coords:list):
     if s_xx > s_yy:
         beta_1 = s_xy/s_xx
         beta_0 = np.mean(y_coords) - beta_1*np.mean(x_coords)
+        return beta_1, beta_0
+
     elif s_xx < s_yy:
         beta_1 = s_xy/s_yy
         beta_0 = np.mean(x_coords) - beta_1*np.mean(y_coords)
@@ -145,7 +147,8 @@ def calculate_slope(x_coords:list, y_coords:list):
         beta_0 = beta_0/beta_1
         beta_1 = 1/beta_1
         #slope, intercept
-    return beta_1, beta_0
+        return beta_1, beta_0
+
 
 def sum_angles_radians(*angles):
     """
